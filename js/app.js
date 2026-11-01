@@ -1,8 +1,7 @@
 // Import Public : site public (clients)
 (function () {
   const { sb, cfg, fcfa, date, joursRestants, esc, normTel, waLien, ETAPES_CAMPAGNE, ETAPES_DEMANDE, nomPays, optionsPays, listeRegions,
-          lib, badge, frise, jauge, msgErreur, toast, compresserImage, urlImageCampagne, occupe, txtVariante,
-          boutonGoogle, brancherGoogle } = window.IA;
+          lib, badge, frise, jauge, msgErreur, toast, compresserImage, urlImageCampagne, occupe, txtVariante } = window.IA;
 
   const vue = document.getElementById('vue');
   const etat = { session: null, profil: null, ac: null, groupeur: null, canal: null, recherche: '', points: null };
@@ -53,11 +52,9 @@
       if (evt === 'PASSWORD_RECOVERY') { location.hash = '#/reinitialiser'; return; }
       if (evt === 'SIGNED_IN' || evt === 'SIGNED_OUT' || evt === 'USER_UPDATED') {
         await chargerProfil();
-        await apresConnexion();
         majEntete();
       }
     });
-    await apresConnexion();
 
     window.addEventListener('hashchange', router);
     router();
@@ -75,18 +72,6 @@
     etat.profil = p.data;
     etat.ac = a.data || null;
   }
-
-  // Après une connexion Google : rattacher le lien de parrainage (compte tout neuf),
-  // puis exiger le numéro WhatsApp que Google ne fournit pas.
-  async function apresConnexion() {
-    if (!etat.session || !etat.profil) return;
-    const parrain = parrainValide();
-    if (parrain && Date.now() - new Date(etat.profil.created_at).getTime() < 30 * 60000) {
-      await sb.rpc('rattacher_parrain', { p_code: parrain.code, p_vu_le: new Date(parrain.t).toISOString() });
-      memo.ecrire('ip_parrain', null);
-    }
-  }
-  const profilIncomplet = () => etat.session && etat.profil && !etat.profil.telephone;
 
   async function chargerPoints() {
     if (etat.points) return etat.points;
@@ -148,11 +133,6 @@
     // Bouton WhatsApp flottant seulement sur l'accueil (ailleurs il masquerait les prix et boutons)
     document.getElementById('wa-flottant').hidden = !(etat.groupeur && etat.groupeur.whatsapp) || (morceaux[0] || '') !== '';
     window.scrollTo(0, 0);
-    // Compte créé avec Google : on demande d'abord le numéro WhatsApp
-    if (profilIncomplet() && !['compte', 'confidentialite'].includes(morceaux[0] || '')) {
-      location.hash = '#/compte?completer=1&retour=' + encodeURIComponent(brut ? '/' + brut : '/');
-      return;
-    }
 
     const routes = {
       '': vueAccueil, campagne: vueCampagne, commande: vueCommande, 'sur-mesure': vueSurMesure,
@@ -985,7 +965,6 @@
       <p class="discret">Un compte vous permet de commander, de recevoir nos prix et de suivre vos colis.</p>
       <div class="onglets"><button data-t="connexion" class="actif">Connexion</button><button data-t="inscription">Créer un compte</button></div>
       <form class="carte" id="form-connexion">
-        ${boutonGoogle('Se connecter avec Google')}
         <label for="c-email">Email</label><input id="c-email" type="email" inputmode="email" autocomplete="email" required>
         <label for="c-mdp">Mot de passe</label><input id="c-mdp" type="password" autocomplete="current-password" required>
         <button class="btn btn-large" style="margin-top:14px">Se connecter</button>
@@ -995,7 +974,6 @@
         ${parrainValide() ? `<div class="alerte alerte-info" id="bandeau-invitation">Vous avez été invité par un Ambassadeur Commercial d'Import Public.
           Il sera enregistré comme la personne qui vous a fait découvrir Import Public (cela ne change rien pour vous).
           <button type="button" class="btn btn-lien" id="retirer-invitation">Ne pas l'associer</button></div>` : ''}
-        ${boutonGoogle('S\'inscrire avec Google')}
         <label for="i-nom">Nom complet</label><input id="i-nom" autocomplete="name" required>
         <div class="rangee">
           <div><label for="i-pays">Pays</label><select id="i-pays" autocomplete="country">${optionsPays('TG')}</select></div>
@@ -1024,7 +1002,6 @@
       document.getElementById('message-compte').innerHTML = '';
     }));
 
-    brancherGoogle(vue);
     const retirer = document.getElementById('retirer-invitation');
     if (retirer) retirer.addEventListener('click', () => {
       memo.ecrire('ip_parrain', null);
