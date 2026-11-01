@@ -1,15 +1,46 @@
 // Import Public : site public (clients)
 (function () {
   const { sb, cfg, fcfa, date, joursRestants, esc, normTel, waLien, ETAPES_CAMPAGNE, ETAPES_DEMANDE, nomPays, optionsPays, listeRegions,
-          lib, badge, frise, jauge, msgErreur, toast, compresserImage, urlImageCampagne, occupe } = window.IA;
+          lib, badge, frise, jauge, msgErreur, toast, compresserImage, urlImageCampagne, occupe, txtVariante } = window.IA;
 
   const vue = document.getElementById('vue');
-  const etat = { session: null, profil: null, groupeur: null, canal: null, recherche: '' };
+  const etat = { session: null, profil: null, ac: null, groupeur: null, canal: null, recherche: '', points: null };
+
+  // ------------------------------------------------------------------
+  // Lien de parrainage : https://importpublic.com/?ac=CODE
+  // On garde le PREMIER lien cliqué pendant 30 jours (pas de « vol » de dernière minute).
+  // Stocké uniquement sur ce téléphone : un code, une date et un identifiant aléatoire.
+  // ------------------------------------------------------------------
+  const DUREE_PARRAINAGE = 30 * 86400000;
+  const memo = {
+    lire(k) { try { return JSON.parse(localStorage.getItem(k)); } catch { return null; } },
+    ecrire(k, v) { try { if (v == null) localStorage.removeItem(k); else localStorage.setItem(k, JSON.stringify(v)); } catch { /* navigation privée */ } }
+  };
+  function capterParrainage() {
+    const p = new URLSearchParams(location.search);
+    const code = (p.get('ac') || '').trim().toUpperCase();
+    if (!/^[A-Z0-9]{4,12}$/.test(code)) return;
+    let visiteur = memo.lire('ip_visiteur');
+    if (!visiteur) {
+      visiteur = (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : 'v' + Date.now() + Math.random().toString(36).slice(2);
+      memo.ecrire('ip_visiteur', visiteur);
+    }
+    const actuel = memo.lire('ip_parrain');
+    if (!actuel || Date.now() - actuel.t > DUREE_PARRAINAGE) memo.ecrire('ip_parrain', { code, t: Date.now() });
+    sb.rpc('enregistrer_visite', { p_code: code, p_visiteur: visiteur }).then(() => {}, () => {});
+    p.delete('ac');
+    history.replaceState(null, '', location.pathname + (p.toString() ? '?' + p : '') + location.hash);
+  }
+  const parrainValide = () => {
+    const x = memo.lire('ip_parrain');
+    return x && Date.now() - x.t <= DUREE_PARRAINAGE ? x : null;
+  };
 
   // ------------------------------------------------------------------
   // Démarrage
   // ------------------------------------------------------------------
   async function demarrer() {
+    capterParrainage();
     const { data } = await sb.auth.getSession();
     etat.session = data.session;
     await Promise.all([chargerProfil(), chargerGroupeur()]);
@@ -31,9 +62,23 @@
 
   async function chargerProfil() {
     etat.profil = null;
+    etat.ac = null;
     if (!etat.session) return;
-    const { data } = await sb.from('profils').select('*').eq('id', etat.session.user.id).maybeSingle();
-    etat.profil = data;
+    const uid = etat.session.user.id;
+    const [p, a] = await Promise.all([
+      sb.from('profils').select('*').eq('id', uid).maybeSingle(),
+      sb.from('ambassadeurs').select('*').eq('id', uid).maybeSingle()
+    ]);
+    etat.profil = p.data;
+    etat.ac = a.data || null;
+  }
+
+  async function chargerPoints() {
+    if (etat.points) return etat.points;
+    const { data } = await sb.from('points_retrait').select('id,nom,ville,region,adresse,horaires,principal')
+      .eq('actif', true).order('principal', { ascending: false }).order('nom');
+    etat.points = data || [];
+    return etat.points;
   }
 
   async function chargerGroupeur() {
@@ -82,7 +127,8 @@
     const morceaux = chemin.split('/').filter(Boolean);
     const params = new URLSearchParams(qs || '');
     const onglet = { '': 'campagnes', campagne: 'campagnes', 'sur-mesure': 'sur-mesure', demande: 'colis',
-                     commande: 'colis', colis: 'colis', compte: 'compte', reinitialiser: 'compte' }[morceaux[0] || ''];
+                     commande: 'colis', colis: 'colis', compte: 'compte', reinitialiser: 'compte',
+                     ambassadeur: 'compte', ac: 'compte' }[morceaux[0] || ''];
     document.querySelectorAll('.nav-bas a, .nav-haut a').forEach((a) => a.classList.toggle('actif', a.dataset.onglet === onglet));
     // Bouton WhatsApp flottant seulement sur l'accueil (ailleurs il masquerait les prix et boutons)
     document.getElementById('wa-flottant').hidden = !(etat.groupeur && etat.groupeur.whatsapp) || (morceaux[0] || '') !== '';
@@ -90,11 +136,12 @@
 
     const routes = {
       '': vueAccueil, campagne: vueCampagne, commande: vueCommande, 'sur-mesure': vueSurMesure,
-      demande: vueDemande, colis: vueColis, compte: vueCompte, reinitialiser: vueReinitialiser
+      demande: vueDemande, colis: vueColis, compte: vueCompte, reinitialiser: vueReinitialiser,
+      ...espaceAC.routes
     };
     const f = routes[morceaux[0] || ''] || vueAccueil;
     vue.innerHTML = '<div class="chargement">Chargement…</div>';
-    Promise.resolve(f(morceaux[1], params)).catch((e) => {
+    Promise.resolve(f(morceaux[1], params, morceaux)).catch((e) => {
       vue.innerHTML = `<div class="carte"><div class="alerte alerte-ko">${esc(msgErreur(e))}</div>
         <button class="btn btn-second" onclick="location.reload()">Réessayer</button></div>`;
     });
@@ -252,13 +299,15 @@
     if (error) throw error;
     if (!c) { vue.innerHTML = '<div class="carte vide">Cette campagne n\'existe pas ou n\'est plus visible.</div>'; return; }
 
-    let dejaCommande = null;
+    let deja = [];
     if (etat.session) {
-      const r = await sb.from('commandes').select('id,quantite,statut').eq('campagne_id', id)
-        .eq('client_id', etat.session.user.id).neq('statut', 'annulee').maybeSingle();
-      dejaCommande = r.data;
+      const r = await sb.from('commandes').select('id,quantite,statut,variante,confirmation').eq('campagne_id', id)
+        .eq('client_id', etat.session.user.id).neq('statut', 'annulee').order('created_at');
+      deja = r.data || [];
     }
+    const points = await chargerPoints();
     const ouverte = c.statut === 'ouverte' && new Date(c.date_cloture) > new Date();
+    const avecVariantes = (c.variantes || []).length > 0;
 
     vue.innerHTML = `
       <a class="retour" href="#/">← Campagnes</a>
@@ -290,37 +339,35 @@
       </div>`;
 
     const zone = document.getElementById('zone-commande');
-    if (dejaCommande) {
-      zone.innerHTML = `<div class="carte"><p><b>Vous avez déjà réservé ${dejaCommande.quantite} unité(s).</b> ${badge(dejaCommande.statut)}</p>
-        <a class="btn btn-large" href="#/commande/${dejaCommande.id}">Voir ma commande</a></div>`;
-    } else if (!ouverte) {
-      zone.innerHTML = `<div class="carte"><div class="alerte alerte-info">Cette campagne n'accepte plus de commandes.</div></div>`;
+    const listeDeja = deja.length ? `<div class="carte"><h2>Vos réservations</h2>${deja.map((o) => `
+        <a class="ligne" href="#/commande/${o.id}"><div style="flex:1;min-width:0"><div class="ligne-titre">${o.quantite} unité(s)${
+          txtVariante(o.variante) ? ' · ' + esc(txtVariante(o.variante)) : ''}</div></div>
+          ${badge(o.confirmation === 'en_attente_client' ? 'a_confirmer' : o.statut)}</a>`).join('')}</div>` : '';
+    if (!ouverte) {
+      zone.innerHTML = listeDeja + `<div class="carte"><div class="alerte alerte-info">Cette campagne n'accepte plus de commandes.</div></div>`;
+    } else if (deja.length && !avecVariantes) {
+      zone.innerHTML = listeDeja;
     } else {
-      zone.innerHTML = `<div class="carte">
-        <h2>Réserver</h2>
-        <label for="qte">Quantité</label>
-        <div class="quantite"><button type="button" data-d="-1" aria-label="Moins">−</button>
-          <input id="qte" type="number" inputmode="numeric" min="1" value="1"><button type="button" data-d="1" aria-label="Plus">+</button></div>
-        <div class="total"><span>Total à payer</span><b id="total">${fcfa(c.prix_unitaire)}</b></div>
+      zone.innerHTML = listeDeja + `<div class="carte" id="form-reserver">
+        <h2>${deja.length ? 'Réserver une autre variante' : 'Réserver'}</h2>
+        ${champsCommande(c, points)}
         <button class="btn btn-large" id="btn-commander">${etat.session ? 'Réserver et payer' : 'Se connecter pour réserver'}</button>
         <p class="aide" style="margin-top:10px">Si le quota n'est pas atteint à la clôture, vous êtes remboursé.</p>
       </div>`;
-      const qte = document.getElementById('qte');
-      const majTotal = () => {
-        const q = Math.max(1, parseInt(qte.value, 10) || 1);
-        document.getElementById('total').textContent = fcfa(q * c.prix_unitaire);
-      };
-      zone.querySelectorAll('.quantite button').forEach((b) => b.addEventListener('click', () => {
-        qte.value = Math.max(1, (parseInt(qte.value, 10) || 1) + Number(b.dataset.d)); majTotal();
-      }));
-      qte.addEventListener('input', majTotal);
+      const form = document.getElementById('form-reserver');
+      brancherChamps(form, c);
       document.getElementById('btn-commander').addEventListener('click', (ev) => {
         if (!exigerCompte()) return;
+        const choix = lireChamps(form);
+        if (choix.manque) { toast('Choisissez : ' + choix.manque, 'ko'); return; }
         occupe(ev.currentTarget, async () => {
-          const q = Math.max(1, parseInt(qte.value, 10) || 1);
           const { data, error } = await sb.from('commandes')
-            .insert({ campagne_id: c.id, client_id: etat.session.user.id, quantite: q }).select('id').single();
-          if (error) { toast(msgErreur(error), 'ko'); return; }
+            .insert({ campagne_id: c.id, client_id: etat.session.user.id, quantite: choix.quantite, variante: choix.variante, point_id: choix.point })
+            .select('id').single();
+          if (error) {
+            toast(/duplicate|unique/i.test(error.message) ? 'Vous avez déjà réservé cette variante : modifiez la quantité dans votre commande.' : msgErreur(error), 'ko');
+            return;
+          }
           location.hash = '#/commande/' + data.id;
         });
       });
@@ -331,6 +378,74 @@
       .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'campagnes', filter: 'id=eq.' + id },
         (p) => { const z = document.getElementById('zone-jauge'); if (z) z.innerHTML = jauge(p.new.quantite_payee, p.new.quota); })
       .subscribe();
+  }
+
+  // ------------------------------------------------------------------
+  // Champs de commande : variantes (boutons), quantité, point de retrait.
+  // Partagés avec « Commander pour un client » (espace Ambassadeur).
+  // ------------------------------------------------------------------
+  function champsCommande(c, points) {
+    const vars = c.variantes || [];
+    return `${vars.map((v) => `<div class="groupe-variante"><span class="etiquette">${esc(v.nom)}</span>
+        <div class="choix-variante" data-nom="${esc(v.nom)}">${(v.options || []).map((o) =>
+          `<button type="button" class="option${v.options.length === 1 ? ' actif' : ''}" data-val="${esc(o)}">${esc(o)}</button>`).join('')}</div></div>`).join('')}
+      <label for="qte">Quantité</label>
+      <div class="quantite"><button type="button" data-d="-1" aria-label="Moins">−</button>
+        <input id="qte" type="number" inputmode="numeric" min="1" value="1"><button type="button" data-d="1" aria-label="Plus">+</button></div>
+      ${points.length > 1 ? `<label for="point">Point de retrait</label>
+        <select id="point">${points.map((p) => `<option value="${p.id}">${esc(p.nom)}${p.ville ? ' · ' + esc(p.ville) : ''}</option>`).join('')}</select>`
+        : points.length === 1 ? `<p class="aide" style="margin-top:10px">Retrait : <b>${esc(points[0].nom)}</b></p>` : ''}
+      <div class="total"><span>Total à payer</span><b id="total">${fcfa(c.prix_unitaire)}</b></div>`;
+  }
+  function brancherChamps(zone, c) {
+    const qte = zone.querySelector('#qte');
+    const majTotal = () => { zone.querySelector('#total').textContent = fcfa(Math.max(1, parseInt(qte.value, 10) || 1) * c.prix_unitaire); };
+    zone.querySelectorAll('.quantite button').forEach((b) => b.addEventListener('click', () => {
+      qte.value = Math.max(1, (parseInt(qte.value, 10) || 1) + Number(b.dataset.d)); majTotal();
+    }));
+    qte.addEventListener('input', majTotal);
+    zone.querySelectorAll('.choix-variante').forEach((g) => g.querySelectorAll('.option').forEach((b) =>
+      b.addEventListener('click', () => g.querySelectorAll('.option').forEach((x) => x.classList.toggle('actif', x === b)))));
+  }
+  function lireChamps(zone) {
+    const variante = {};
+    let manque = null;
+    zone.querySelectorAll('.choix-variante').forEach((g) => {
+      const s = g.querySelector('.option.actif');
+      if (s) variante[g.dataset.nom] = s.dataset.val; else manque = manque || g.dataset.nom;
+    });
+    const p = zone.querySelector('#point');
+    return { variante, manque, quantite: Math.max(1, parseInt(zone.querySelector('#qte').value, 10) || 1),
+             point: p ? p.value : ((etat.points && etat.points[0]) || {}).id || null };
+  }
+
+  // Colis en point de retrait : où, quand, et le code à présenter
+  async function blocColis(filtre) {
+    const { data: cl } = await sb.from('colis').select('id,reference,statut,recu_le,remis_le,points_retrait(nom,adresse,ville,horaires,telephone),colis_codes(code)')
+      .eq(filtre.col, filtre.val).maybeSingle();
+    if (!cl) return null;
+    const pt = cl.points_retrait || {};
+    const code = (Array.isArray(cl.colis_codes) ? (cl.colis_codes[0] || {}).code : (cl.colis_codes || {}).code) || '';
+    const lieu = `<dl class="cle-valeur"><dt>Point de retrait</dt><dd>${esc(pt.nom || '')}</dd>
+        ${pt.adresse || pt.ville ? `<dt>Adresse</dt><dd>${esc([pt.adresse, pt.ville].filter(Boolean).join(', '))}</dd>` : ''}
+        ${pt.horaires ? `<dt>Horaires</dt><dd>${esc(pt.horaires)}</dd>` : ''}
+        <dt>Référence colis</dt><dd><b>${esc(cl.reference)}</b></dd></dl>`;
+    const codeHtml = `<div class="code-retrait"><span>Votre code de retrait</span><b>${esc(code.replace(/(\d{3})(\d{3})/, '$1 $2'))}</b>
+        <small>Ne le communiquez qu'au point de retrait, au moment de récupérer le colis.</small></div>`;
+    if (cl.statut === 'remis') {
+      return `<div class="carte carte-reception"><h2>Colis remis</h2><p>Remis le ${date(cl.remis_le, true)}. Merci pour votre confiance&nbsp;!</p></div>`;
+    }
+    if (cl.statut === 'attendu') {
+      return `<div class="carte"><h2>Votre colis arrive au point de retrait</h2>
+        <p class="discret">Il est arrivé à Lomé et part vers votre point de retrait. Vous serez prévenu dès qu'il y est.</p>${lieu}${codeHtml}</div>`;
+    }
+    if (cl.statut === 'non_recupere' || cl.statut === 'litige') {
+      const g = etat.groupeur || {};
+      return `<div class="carte"><h2>${esc(lib(cl.statut))}</h2>${lieu}${codeHtml}
+        ${g.whatsapp ? `<a class="btn btn-wa" target="_blank" rel="noopener" href="${waLien(g.whatsapp, 'Bonjour Import Public, au sujet de mon colis ' + cl.reference + ' : ')}">Nous écrire sur WhatsApp</a>` : ''}</div>`;
+    }
+    return `<div class="carte carte-reception"><h2>${window.ICO.coche}Prêt au retrait&nbsp;!</h2>
+      <p>Présentez ce code au point de retrait pour récupérer votre colis.</p>${codeHtml}${lieu}</div>`;
   }
 
   // ------------------------------------------------------------------
@@ -401,15 +516,27 @@
     if (error) throw error;
     if (!o) { vue.innerHTML = '<div class="carte vide">Commande introuvable.</div>'; return; }
     const c = o.campagnes;
-    const [{ data: paiements }, { data: historique }] = await Promise.all([
+    const [{ data: paiements }, { data: historique }, colisHtml, points] = await Promise.all([
       sb.from('paiements').select('*').eq('commande_id', id).order('created_at', { ascending: false }),
-      sb.from('statuts_expedition').select('statut,created_at').eq('campagne_id', c.id).order('created_at')
+      sb.from('statuts_expedition').select('statut,created_at').eq('campagne_id', c.id).order('created_at'),
+      blocColis({ col: 'commande_id', val: id }),
+      chargerPoints()
     ]);
     const enVerif = (paiements || []).find((p) => p.statut === 'initie');
     const rejete = (paiements || []).find((p) => p.statut === 'echoue');
+    const aConfirmer = o.confirmation === 'en_attente_client' && o.statut === 'en_attente_paiement';
+    const point = points.find((p) => p.id === o.point_id);
 
     let corps = '';
-    if (o.statut === 'en_attente_paiement') {
+    if (aConfirmer) {
+      corps = `<h2>Commande préparée pour vous</h2>
+        <p>Un Ambassadeur Commercial d'Import Public a préparé cette commande avec vous le ${date(o.created_at, true)}.
+        Vérifiez le produit, la quantité et le montant ci-dessus.</p>
+        <p class="aide">Rien n'est payé tant que vous ne confirmez pas. Vous paierez ensuite vous-même, au numéro marchand d'Import Public.
+        Ne remettez jamais d'argent à un ambassadeur.</p>
+        <div class="boutons"><button class="btn btn-ok" id="confirmer-cmd">${window.ICO.coche}Je confirme cette commande</button>
+          <button class="btn btn-ko" id="refuser-cmd">Ce n'est pas ma commande</button></div>`;
+    } else if (o.statut === 'en_attente_paiement') {
       corps = (rejete && !enVerif ? `<div class="alerte alerte-ko">Le paiement avec la référence ${esc(rejete.reference_externe)} n'a pas été retrouvé. Vérifiez la référence ou contactez-nous.</div>` : '')
         + blocPaiement({ commandeId: o.id, montant: o.montant_total, enVerification: enVerif, apres: router });
     } else if (o.statut === 'a_rembourser') {
@@ -421,7 +548,7 @@
     }
 
     // Commande non payée : le client peut la modifier ou l'annuler (tant qu'aucun paiement n'est en vérification)
-    const modifiable = o.statut === 'en_attente_paiement' && !enVerif;
+    const modifiable = o.statut === 'en_attente_paiement' && !enVerif && !aConfirmer;
     const campagneOuverte = c.statut === 'ouverte' && new Date(c.date_cloture) > new Date();
     const actions = modifiable ? `<div class="carte">
         <h2>Modifier ma commande</h2>
@@ -437,8 +564,8 @@
         <div id="confirmer-annulation"></div>
       </div>` : '';
 
-    // Colis arrivé à Lomé : le client confirme la réception
-    const peutConfirmer = o.statut === 'payee' && ['arrivee', 'terminee'].includes(c.statut);
+    // Colis arrivé à Lomé : remise en point de retrait avec code, sinon le client confirme lui-même
+    const peutConfirmer = !colisHtml && o.statut === 'payee' && ['arrivee', 'terminee'].includes(c.statut);
     const reception = peutConfirmer ? `<div class="carte carte-reception">
         <h2>Votre colis est arrivé à Lomé</h2>
         <p>Une fois le colis en main, confirmez la réception pour clôturer votre commande.</p>
@@ -455,16 +582,18 @@
       <a class="retour" href="#/colis">← Mes colis</a>
       <div class="deux-colonnes"><div class="colonne">
       <div class="carte">
-        <div style="display:flex;justify-content:space-between;gap:10px"><h1>${esc(c.titre)}</h1>${badge(o.statut)}</div>
+        <div style="display:flex;justify-content:space-between;gap:10px"><h1>${esc(c.titre)}</h1>${badge(aConfirmer ? 'a_confirmer' : o.statut)}</div>
         <dl class="cle-valeur">
+          ${txtVariante(o.variante) ? `<dt>Variante</dt><dd>${esc(txtVariante(o.variante))}</dd>` : ''}
           <dt>Quantité</dt><dd>${o.quantite}</dd>
           <dt>Montant</dt><dd>${fcfa(o.montant_total)}</dd>
           <dt>Commandé le</dt><dd>${date(o.created_at, true)}</dd>
           <dt>Transport</dt><dd>${esc(lib(c.mode_transport))}</dd>
+          ${point ? `<dt>Retrait</dt><dd>${esc(point.nom)}</dd>` : ''}
         </dl>
         <div style="margin-top:12px">${jauge(c.quantite_payee, c.quota)}</div>
       </div>
-      ${reception}
+      ${colisHtml || reception}
       ${corps ? `<div class="carte">${corps}</div>` : ''}
       ${actions}
       ${aide}
@@ -507,6 +636,13 @@
       if (error) { toast(msgErreur(error), 'ko'); return; }
       toast('Merci ! Réception confirmée.'); router();
     }));
+    const repondre = (accepte) => (ev) => occupe(ev.currentTarget, async () => {
+      const { error } = await sb.rpc('confirmer_commande_assistee', { p_commande: o.id, p_accepte: accepte });
+      if (error) { toast(msgErreur(error), 'ko'); return; }
+      toast(accepte ? 'Commande confirmée. Vous pouvez payer.' : 'Commande refusée et annulée.'); router();
+    });
+    const bC = document.getElementById('confirmer-cmd'); if (bC) bC.addEventListener('click', repondre(true));
+    const bR = document.getElementById('refuser-cmd'); if (bR) bR.addEventListener('click', repondre(false));
   }
 
   // ------------------------------------------------------------------
@@ -589,10 +725,11 @@
     const { data: d, error } = await sb.from('demandes').select('*').eq('id', id).maybeSingle();
     if (error) throw error;
     if (!d) { vue.innerHTML = '<div class="carte vide">Demande introuvable.</div>'; return; }
-    const [{ data: historique }, { data: paiements }, photoUrl] = await Promise.all([
+    const [{ data: historique }, { data: paiements }, photoUrl, colisHtml] = await Promise.all([
       sb.from('historique_demandes').select('statut,created_at').eq('demande_id', id).order('created_at'),
       sb.from('paiements').select('*').eq('demande_id', id).order('created_at', { ascending: false }),
-      d.photo_path ? sb.storage.from('demandes').createSignedUrl(d.photo_path, 3600).then((r) => r.data && r.data.signedUrl) : null
+      d.photo_path ? sb.storage.from('demandes').createSignedUrl(d.photo_path, 3600).then((r) => r.data && r.data.signedUrl) : null,
+      blocColis({ col: 'demande_id', val: id })
     ]);
     const enVerif = (paiements || []).find((p) => p.statut === 'initie');
     const rejete = (paiements || []).find((p) => p.statut === 'echoue');
@@ -608,6 +745,8 @@
     } else if (d.statut === 'acceptee') {
       action = (rejete && !enVerif ? `<div class="alerte alerte-ko">Le paiement avec la référence ${esc(rejete.reference_externe)} n'a pas été retrouvé.</div>` : '')
         + blocPaiement({ demandeId: d.id, montant: d.montant_devis, enVerification: enVerif, apres: router });
+    } else if (d.statut === 'arrivee' && colisHtml) {
+      action = '';
     } else if (d.statut === 'arrivee') {
       action = `<h2>Votre colis est arrivé à Lomé</h2><p>Une fois le colis en main, confirmez la réception.</p>
         <button class="btn btn-large btn-ok" id="confirmer-reception">${window.ICO.coche}J'ai reçu mon colis</button>`;
@@ -655,6 +794,7 @@
         </dl>
       </div>
       </div><div class="colonne">
+      ${colisHtml || ''}
       ${action ? `<div class="carte">${action}</div>` : ''}
       ${gestionDemande}
       <div class="carte"><h2>Suivi</h2>${['refusee', 'annulee'].includes(d.statut) ? '<p class="discret">—</p>' : frise(ETAPES_DEMANDE, d.statut, historique)}</div>
@@ -718,24 +858,32 @@
     if (!exigerCompte()) return;
     const uid = etat.session.user.id;
     const [co, de] = await Promise.all([
-      sb.from('commandes').select('id,quantite,montant_total,statut,created_at,campagnes(titre,statut,image_url)')
+      sb.from('commandes').select('id,quantite,montant_total,statut,confirmation,variante,created_at,campagnes(titre,statut,image_url),colis(statut)')
         .eq('client_id', uid).order('created_at', { ascending: false }),
       sb.from('demandes').select('id,description,statut,montant_devis,created_at').eq('client_id', uid).order('created_at', { ascending: false })
     ]);
     if (co.error) throw co.error;
     if (de.error) throw de.error;
 
-    // Statut le plus parlant pour le client : celui de la campagne une fois payé
-    const statutAffiche = (o) => (o.statut === 'payee' ? o.campagnes.statut : o.statut);
+    // Statut le plus parlant pour le client : à confirmer, colis au point, ou étape de la campagne une fois payé
+    const colisDe = (o) => (Array.isArray(o.colis) ? o.colis[0] : o.colis);
+    const statutAffiche = (o) => {
+      if (o.confirmation === 'en_attente_client' && o.statut === 'en_attente_paiement') return 'a_confirmer';
+      const cl = colisDe(o);
+      if (o.statut === 'payee' && cl) return cl.statut;
+      return o.statut === 'payee' ? o.campagnes.statut : o.statut;
+    };
+    const aConfirmer = co.data.filter((o) => statutAffiche(o) === 'a_confirmer').length;
 
     vue.innerHTML = `
       <h1>Mes colis</h1>
+      ${aConfirmer ? `<div class="alerte alerte-alerte">${aConfirmer} commande${aConfirmer > 1 ? 's' : ''} préparée${aConfirmer > 1 ? 's' : ''} par un ambassadeur attend${aConfirmer > 1 ? 'ent' : ''} votre confirmation.</div>` : ''}
       <div class="deux-colonnes egales"><div class="carte"><h2>Commandes groupées</h2>
         ${co.data.length ? co.data.map((o) => `
           <a class="ligne" href="#/commande/${o.id}">
             <div class="vignette" style="background-image:url('${esc(urlImageCampagne(o.campagnes.image_url))}')"></div>
             <div style="flex:1;min-width:0"><div class="ligne-titre">${esc(o.campagnes.titre)}</div>
-              <small>${o.quantite} unité(s) · ${fcfa(o.montant_total)}</small></div>
+              <small>${o.quantite} unité(s)${txtVariante(o.variante) ? ' · ' + esc(txtVariante(o.variante)) : ''} · ${fcfa(o.montant_total)}</small></div>
             ${badge(statutAffiche(o))}</a>`).join('')
           : '<p class="discret">Aucune commande pour le moment. <a href="#/">Voir les campagnes</a></p>'}
       </div>
@@ -758,8 +906,19 @@
 
     if (etat.session) {
       const p = etat.profil || {};
+      const I = window.ICO;
+      const carteAC = etat.ac
+        ? `<a class="carte carte-ac" href="#/ac"><span class="carte-ac-ico">${I.personnes}</span>
+             <div><b>Espace Ambassadeur Commercial</b><span>${etat.ac.statut === 'actif' ? 'Votre lien, vos clients, vos commissions' : 'Statut suspendu'}</span></div>${I.fleche}</a>`
+        : `<a class="carte carte-ac" href="#/ambassadeur"><span class="carte-ac-ico">${I.personnes}</span>
+             <div><b>Devenir Ambassadeur Commercial</b><span>Facultatif · Faites connaître Import Public, aidez vos proches et gagnez des commissions</span></div>${I.fleche}</a>`;
       vue.innerHTML = `
         <h1>Mon compte</h1>
+        <div class="deux-colonnes"><div class="colonne">
+        <div class="carte reference-client"><span>Votre référence client</span><b>${esc(p.reference || '—')}</b>
+          <small>Communiquez-la à un ambassadeur ou à notre équipe pour être retrouvé rapidement.</small></div>
+        ${carteAC}
+        </div><div class="colonne">
         <form class="carte" id="form-profil">
           <label for="p-nom">Nom complet</label><input id="p-nom" required value="${esc(p.nom_complet || '')}">
           <label for="p-tel">Numéro WhatsApp</label><input id="p-tel" type="tel" inputmode="tel" required value="${esc(p.telephone || '')}">
@@ -772,7 +931,8 @@
           <label>Email</label><input value="${esc(etat.session.user.email || '')}" disabled>
           <button class="btn btn-large" style="margin-top:14px">Enregistrer</button>
         </form>
-        <button class="btn btn-second btn-large" id="deconnexion">Se déconnecter</button>`;
+        <button class="btn btn-second btn-large" id="deconnexion">Se déconnecter</button>
+        </div></div>`;
       document.getElementById('form-profil').addEventListener('submit', (ev) => {
         ev.preventDefault();
         occupe(ev.target.querySelector('button'), async () => {
@@ -807,6 +967,9 @@
         <p style="margin-top:12px"><button type="button" class="btn btn-lien" id="oubli">Mot de passe oublié ?</button></p>
       </form>
       <form class="carte" id="form-inscription" hidden>
+        ${parrainValide() ? `<div class="alerte alerte-info" id="bandeau-invitation">Vous avez été invité par un Ambassadeur Commercial d'Import Public.
+          Il sera enregistré comme la personne qui vous a fait découvrir Import Public (cela ne change rien pour vous).
+          <button type="button" class="btn btn-lien" id="retirer-invitation">Ne pas l'associer</button></div>` : ''}
         <label for="i-nom">Nom complet</label><input id="i-nom" autocomplete="name" required>
         <div class="rangee">
           <div><label for="i-pays">Pays</label><select id="i-pays" autocomplete="country">${optionsPays('TG')}</select></div>
@@ -834,6 +997,18 @@
       document.getElementById('form-inscription').hidden = b.dataset.t !== 'inscription';
       document.getElementById('message-compte').innerHTML = '';
     }));
+
+    const retirer = document.getElementById('retirer-invitation');
+    if (retirer) retirer.addEventListener('click', () => {
+      memo.ecrire('ip_parrain', null);
+      document.getElementById('bandeau-invitation').remove();
+      toast('Invitation retirée');
+    });
+    // Arrivée par un lien d'ambassadeur : on propose directement la création de compte
+    if (parrainValide() && params.get('inscription') !== '0') {
+      const b = document.querySelector('.onglets button[data-t="inscription"]');
+      if (b && !retour) setTimeout(() => b.click(), 0);
+    }
 
     document.getElementById('i-pays').addEventListener('change', (e) => {
       document.getElementById('i-regions').innerHTML = listeRegions(e.target.value);
@@ -863,17 +1038,21 @@
       const paysChoisi = document.getElementById('i-pays').value;
       const tel = normTel(document.getElementById('i-tel').value, paysChoisi);
       if (tel.replace(/\D/g, '').length < 11) { message('Numéro WhatsApp incomplet.', 'ko'); return; }
-      occupe(ev.target.querySelector('button'), async () => {
+      occupe(ev.target.querySelector('button[type=submit],button:not([type])'), async () => {
+        const parrain = parrainValide();
+        const meta = { nom_complet: document.getElementById('i-nom').value.trim(), telephone: tel,
+                       pays: paysChoisi, region: document.getElementById('i-region').value.trim() };
+        if (parrain) { meta.ac = parrain.code; meta.ac_vu_le = new Date(parrain.t).toISOString(); }
         const { data, error } = await sb.auth.signUp({
           email: document.getElementById('i-email').value.trim(),
           password: document.getElementById('i-mdp').value,
           options: {
-            data: { nom_complet: document.getElementById('i-nom').value.trim(), telephone: tel,
-                    pays: paysChoisi, region: document.getElementById('i-region').value.trim() },
+            data: meta,
             emailRedirectTo: location.origin + location.pathname
           }
         });
         if (error) { message(esc(msgErreur(error)), 'ko'); return; }
+        memo.ecrire('ip_parrain', null);
         if (data.session) { await chargerProfil(); majEntete(); toast('Compte créé, bienvenue !'); allerApres(); }
         else message('Compte créé. <b>Ouvrez l\'email que nous venons de vous envoyer</b> pour l\'activer, puis connectez-vous.', 'ok');
       });
@@ -894,6 +1073,12 @@
       });
     });
   }
+
+  // Espace Ambassadeur Commercial (fichier ambassadeur.js)
+  const espaceAC = window.IP_AC({
+    etat, vue, exigerCompte, chargerProfil, chargerPoints, champsCommande, brancherChamps, lireChamps, telLisible,
+    rafraichir: () => router()
+  });
 
   demarrer();
 })();
