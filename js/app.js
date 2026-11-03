@@ -419,6 +419,43 @@
              point: p ? p.value : ((etat.points && etat.points[0]) || {}).id || null };
   }
 
+  // Suivi détaillé : chaque étape cochée par l'équipe apparaît ici avec sa date
+  const ETAPES_CLIENT = [
+    ['fournisseur_paye', 'Commande passée et payée au fournisseur'],
+    ['production', 'En préparation chez le fournisseur'],
+    ['expedie_entrepot', 'Expédiée vers notre entrepôt en Chine'],
+    ['recu_entrepot', 'Reçue et contrôlée à notre entrepôt en Chine'],
+    ['consolide', 'Prête au départ chez le transitaire'],
+    ['depart', 'Partie de Chine'],
+    ['arrive_port', 'Arrivée à Lomé (aéroport ou port)'],
+    ['dedouanement', 'Dédouanée'],
+    ['retire', 'À notre entrepôt de Lomé'],
+    ['distribue', 'En route vers votre point de retrait']
+  ];
+  async function suiviDetaille(o, c, paiements, historique) {
+    const [{ data: ops }, { data: cl }] = await Promise.all([
+      sb.rpc('suivi_campagne', { p_campagne: c.id }),
+      sb.from('colis').select('statut,recu_le,remis_le').eq('commande_id', o.id).maybeSingle()
+    ]);
+    const auPoint = cl && ['recu', 'remis', 'non_recupere', 'litige'].includes(cl.statut);
+    const fait = Object.fromEntries((ops || []).map((x) => [x.etape, x.fait_le]));
+    const paye = (paiements || []).find((p) => p.statut === 'confirme');
+    const quota = (historique || []).find((h) => h.statut === 'quota_atteint');
+    const etapes = [
+      ['Paiement validé', paye ? (paye.confirme_le || paye.created_at) : o.updated_at, true],
+      ['Quota atteint, commande groupée confirmée', quota && quota.created_at, !!quota || c.statut !== 'ouverte'],
+      ...ETAPES_CLIENT.map(([k, l]) => [l, fait[k], !!fait[k]]),
+      ['Prêt au retrait', cl && cl.recu_le, auPoint || o.statut === 'livree'],
+      ...(o.statut === 'livree' ? [['Colis remis', (cl && cl.remis_le) || o.recu_le, true]] : [])
+    ];
+    // Une étape plus loin cochée implique les précédentes
+    let dernier = -1; etapes.forEach((e, i) => { if (e[2]) dernier = i; });
+    return `<ol class="frise">${etapes.map(([l, d], i) => {
+      const cl = i <= dernier ? 'fait' : i === dernier + 1 ? 'courant' : 'avenir';
+      return `<li class="${cl}"><span class="pastille"></span><div><b>${esc(l)}</b>${d && i <= dernier ? `<small>${date(d, true)}</small>` : ''}</div></li>`;
+    }).join('')}</ol>`;
+  }
+
   // Colis en point de retrait : où, quand, et le code à présenter
   async function blocColis(filtre) {
     const { data: cl } = await sb.from('colis').select('id,reference,statut,recu_le,remis_le,points_retrait(nom,adresse,ville,horaires,telephone),colis_codes(code)')
@@ -578,6 +615,8 @@
       ? `<p class="aide-commande">Un souci avec cette commande ? <a target="_blank" rel="noopener" href="${waLien(g.whatsapp, 'Bonjour Import Public, au sujet de ma commande « ' + c.titre + ' » (' + o.quantite + ' unité(s)) : ')}">Écrivez-nous sur WhatsApp</a>.</p>` : '';
 
     const suivi = ['payee', 'livree'].includes(o.statut);
+    const detail = suivi ? await suiviDetaille(o, c, paiements, historique) : '';
+    memo.ecrire('ip_vu_' + o.id, Date.now());
     vue.innerHTML = `
       <a class="retour" href="#/colis">← Mes colis</a>
       <div class="deux-colonnes"><div class="colonne">
@@ -599,8 +638,7 @@
       ${aide}
       </div><div class="colonne">
       <div class="carte"><h2>Suivi du colis</h2>
-        ${suivi ? frise(ETAPES_CAMPAGNE, o.statut === 'livree' ? 'terminee' : c.statut, historique)
-          : '<p class="discret">Le suivi démarre dès que votre paiement est validé.</p>'}
+        ${suivi ? detail : '<p class="discret">Le suivi démarre dès que votre paiement est validé.</p>'}
       </div></div></div>`;
 
     if (modifiable) {
@@ -858,7 +896,7 @@
     if (!exigerCompte()) return;
     const uid = etat.session.user.id;
     const [co, de] = await Promise.all([
-      sb.from('commandes').select('id,quantite,montant_total,statut,confirmation,variante,created_at,campagnes(titre,statut,image_url),colis(statut)')
+      sb.from('commandes').select('id,campagne_id,quantite,montant_total,statut,confirmation,variante,created_at,campagnes(titre,statut,image_url),colis(statut)')
         .eq('client_id', uid).order('created_at', { ascending: false }),
       sb.from('demandes').select('id,description,statut,montant_devis,created_at').eq('client_id', uid).order('created_at', { ascending: false })
     ]);
@@ -874,6 +912,15 @@
       return o.statut === 'payee' ? o.campagnes.statut : o.statut;
     };
     const aConfirmer = co.data.filter((o) => statutAffiche(o) === 'a_confirmer').length;
+    // Pastille « Mis à jour » : une étape a été cochée depuis la dernière consultation de la commande
+    const campagnesSuivies = [...new Set(co.data.filter((o) => ['payee', 'livree'].includes(o.statut)).map((o) => o.campagne_id))];
+    const derniere = {};
+    await Promise.all(campagnesSuivies.map(async (cid) => {
+      const { data } = await sb.rpc('suivi_campagne', { p_campagne: cid });
+      const t = (data || []).reduce((m, x) => Math.max(m, new Date(x.fait_le).getTime()), 0);
+      derniere[cid] = t;
+    }));
+    const misAJour = (o) => derniere[o.campagne_id] && derniere[o.campagne_id] > (memo.lire('ip_vu_' + o.id) || 0);
 
     vue.innerHTML = `
       <h1>Mes colis</h1>
@@ -884,7 +931,7 @@
             <div class="vignette" style="background-image:url('${esc(urlImageCampagne(o.campagnes.image_url))}')"></div>
             <div style="flex:1;min-width:0"><div class="ligne-titre">${esc(o.campagnes.titre)}</div>
               <small>${o.quantite} unité(s)${txtVariante(o.variante) ? ' · ' + esc(txtVariante(o.variante)) : ''} · ${fcfa(o.montant_total)}</small></div>
-            ${badge(statutAffiche(o))}</a>`).join('')
+            ${misAJour(o) ? '<span class="pastille-maj">Mis à jour</span>' : ''}${badge(statutAffiche(o))}</a>`).join('')
           : '<p class="discret">Aucune commande pour le moment. <a href="#/">Voir les campagnes</a></p>'}
       </div>
       <div class="carte"><h2>Demandes sur mesure</h2>
