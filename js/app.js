@@ -47,12 +47,12 @@
     majEntete();
     brancherRecherche();
 
-    sb.auth.onAuthStateChange(async (evt, session) => {
+    // Jamais d'appel Supabase attendu DANS ce rappel (blocage du verrou d'auth) : on diffère.
+    sb.auth.onAuthStateChange((evt, session) => {
       etat.session = session;
-      if (evt === 'PASSWORD_RECOVERY') { location.hash = '#/reinitialiser'; return; }
+      if (evt === 'PASSWORD_RECOVERY') { setTimeout(() => { location.hash = '#/reinitialiser'; }, 0); return; }
       if (evt === 'SIGNED_IN' || evt === 'SIGNED_OUT' || evt === 'USER_UPDATED') {
-        await chargerProfil();
-        majEntete();
+        setTimeout(async () => { await chargerProfil(); majEntete(); if (evt === 'SIGNED_OUT') router(); }, 0);
       }
     });
 
@@ -954,7 +954,10 @@
         document.getElementById('p-regions').innerHTML = listeRegions(e.target.value);
       });
       document.getElementById('deconnexion').addEventListener('click', async () => {
-        await sb.auth.signOut(); location.hash = '#/';
+        try { await sb.auth.signOut(); } finally {
+          // Ceinture et bretelles : on repart d'une page propre
+          location.hash = '#/'; location.reload();
+        }
       });
       return;
     }
