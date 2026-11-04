@@ -203,7 +203,7 @@
       <section class="hero">
         <div class="hero-texte">
           <h1>Achetez ensemble, <span>payez moins.</span></h1>
-          <p class="hero-sous-titre"><b>Vos produits préférés commandés en Chine et livrés à Lomé, au prix de gros grâce aux commandes groupées.</b><br>
+          <p class="hero-sous-titre"><b>Vos produits préférés commandés en Chine et livrés à Lomé, au prix de gros.</b><br>
             Payez avec T-Money ou Flooz et suivez votre colis à chaque étape.</p>
           <div class="boutons">
             <a class="btn btn-hero" href="#offres" id="voir-offres">${I.panier}Découvrir les offres${I.fleche}</a>
