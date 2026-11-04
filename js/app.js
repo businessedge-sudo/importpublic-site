@@ -456,6 +456,31 @@
     }).join('')}</ol>`;
   }
 
+  // Suivi d'une demande sur mesure : devis, paiement, puis les mêmes étapes détaillées que les campagnes
+  async function suiviDemandeDetaille(d, historique) {
+    const [{ data: ops }, { data: cl }] = await Promise.all([
+      sb.rpc('suivi_demande', { p_demande: d.id }),
+      sb.from('colis').select('statut,recu_le,remis_le').eq('demande_id', d.id).maybeSingle()
+    ]);
+    const fait = Object.fromEntries((ops || []).map((x) => [x.etape, x.fait_le]));
+    const h = {}; (historique || []).forEach((x) => { if (!h[x.statut]) h[x.statut] = x.created_at; });
+    const auPoint = cl && ['recu', 'remis', 'non_recupere', 'litige'].includes(cl.statut);
+    const etapes = [
+      ['Demande reçue', h.nouvelle || d.created_at, true],
+      ['Prix envoyé', h.devis_envoye, !!h.devis_envoye || d.montant_devis != null],
+      ['Prix accepté', h.acceptee, !!h.acceptee],
+      ['Paiement validé', h.payee, !!h.payee],
+      ...ETAPES_CLIENT.map(([k, l]) => [l, fait[k], !!fait[k]]),
+      ['Prêt au retrait', cl && cl.recu_le, auPoint || d.statut === 'livree'],
+      ...(d.statut === 'livree' ? [['Colis remis', (cl && cl.remis_le) || d.recu_le, true]] : [])
+    ];
+    let dernier = -1; etapes.forEach((e, i) => { if (e[2]) dernier = i; });
+    return `<ol class="frise">${etapes.map(([l, dt], i) => {
+      const cls = i <= dernier ? 'fait' : i === dernier + 1 ? 'courant' : 'avenir';
+      return `<li class="${cls}"><span class="pastille"></span><div><b>${esc(l)}</b>${dt && i <= dernier ? `<small>${date(dt, true)}</small>` : ''}</div></li>`;
+    }).join('')}</ol>`;
+  }
+
   // Colis en point de retrait : où, quand, et le code à présenter
   async function blocColis(filtre) {
     const { data: cl } = await sb.from('colis').select('id,reference,statut,recu_le,remis_le,points_retrait(nom,adresse,ville,horaires,telephone),colis_codes(code)')
@@ -771,6 +796,8 @@
     ]);
     const enVerif = (paiements || []).find((p) => p.statut === 'initie');
     const rejete = (paiements || []).find((p) => p.statut === 'echoue');
+    const suiviD = await suiviDemandeDetaille(d, historique);
+    memo.ecrire('ip_vu_d_' + d.id, Date.now());
 
     let action = '';
     if (d.statut === 'nouvelle') {
@@ -835,7 +862,7 @@
       ${colisHtml || ''}
       ${action ? `<div class="carte">${action}</div>` : ''}
       ${gestionDemande}
-      <div class="carte"><h2>Suivi</h2>${['refusee', 'annulee'].includes(d.statut) ? '<p class="discret">—</p>' : frise(ETAPES_DEMANDE, d.statut, historique)}</div>
+      <div class="carte"><h2>Suivi</h2>${['refusee', 'annulee'].includes(d.statut) ? '<p class="discret">—</p>' : suiviD}</div>
       </div></div>`;
     brancherGestionDemande(d);
     const bRec = document.getElementById('confirmer-reception');
