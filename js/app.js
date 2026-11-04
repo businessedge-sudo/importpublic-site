@@ -202,9 +202,9 @@
     vue.innerHTML = `
       <section class="hero">
         <div class="hero-texte">
-          <h1>Vos produits préférés en Chine, <span>livrés à Lomé à petit prix&nbsp;!</span></h1>
-          <p class="hero-sous-titre"><b>Profitez des commandes groupées pour acheter malin.</b><br>
-            Payez facilement avec T-Money ou Flooz et suivez votre colis.</p>
+          <h1>Achetez ensemble, <span>payez moins.</span></h1>
+          <p class="hero-sous-titre"><b>Vos produits préférés commandés en Chine et livrés à Lomé, au prix de gros grâce aux commandes groupées.</b><br>
+            Payez avec T-Money ou Flooz et suivez votre colis à chaque étape.</p>
           <div class="boutons">
             <a class="btn btn-hero" href="#offres" id="voir-offres">${I.panier}Découvrir les offres${I.fleche}</a>
             <a class="btn btn-hero-second" href="#/sur-mesure">${I.crayon}Commander un produit sur mesure</a>
