@@ -5,6 +5,10 @@
 
   const vue = document.getElementById('vue');
   const etat = { session: null, profil: null, ac: null, groupeur: null, canal: null, recherche: '', points: null };
+  // Alertes du téléphone, cloche et application installable (commun/notifs.js)
+  const notifs = window.IP_NOTIFS({ origine: 'site', getSession: () => etat.session, getProfil: () => etat.profil,
+    surNotif: (n) => { if (n.lien === '#/messages') majPointMessages(); } });
+  const chat = window.IP_CHAT({ equipe: false });
 
   // ------------------------------------------------------------------
   // Lien de parrainage : https://importpublic.com/?ac=CODE
@@ -46,13 +50,19 @@
     await Promise.all([chargerProfil(), chargerGroupeur()]);
     majEntete();
     brancherRecherche();
+    notifs.demarrer();
+    majPointMessages();
 
     // Jamais d'appel Supabase attendu DANS ce rappel (blocage du verrou d'auth) : on diffère.
     sb.auth.onAuthStateChange((evt, session) => {
       etat.session = session;
       if (evt === 'PASSWORD_RECOVERY') { setTimeout(() => { location.hash = '#/reinitialiser'; }, 0); return; }
       if (evt === 'SIGNED_IN' || evt === 'SIGNED_OUT' || evt === 'USER_UPDATED') {
-        setTimeout(async () => { await chargerProfil(); majEntete(); if (evt === 'SIGNED_OUT') router(); }, 0);
+        setTimeout(async () => {
+          await chargerProfil(); majEntete();
+          if (evt !== 'USER_UPDATED') { notifs.demarrer(); majPointMessages(); }
+          if (evt === 'SIGNED_OUT') router();
+        }, 0);
       }
     });
 
@@ -98,9 +108,25 @@
   function majEntete() {
     const zone = document.getElementById('entete-compte');
     const I = window.ICO;
-    zone.innerHTML = etat.session
+    zone.innerHTML = (etat.session ? '<span id="cloche"></span>' : '') + (etat.session
       ? `<a class="lien-compte" href="#/compte">${I.utilisateur}<span>${esc((etat.profil && etat.profil.nom_complet || 'Mon compte').split(' ')[0])}</span>${I.chevron}</a>`
-      : `<a class="lien-compte" href="#/compte">${I.utilisateur}<span>Se connecter</span></a>`;
+      : `<a class="lien-compte" href="#/compte">${I.utilisateur}<span>Se connecter</span></a>`);
+    notifs.dessinerCloche();
+  }
+
+  // Pastille « nouveau message » sur l'onglet Messages
+  async function majPointMessages() {
+    let nouveau = false;
+    if (etat.session) {
+      const { data } = await sb.from('conversations').select('dernier_msg_le,lu_client_le,dernier_de_equipe')
+        .eq('client_id', etat.session.user.id).maybeSingle();
+      nouveau = !!(data && data.dernier_de_equipe && new Date(data.dernier_msg_le) > new Date(data.lu_client_le));
+    }
+    document.querySelectorAll('[data-onglet="messages"]').forEach((a) => {
+      let pt = a.querySelector('.point-nouveau');
+      if (nouveau && !pt) { pt = document.createElement('span'); pt.className = 'point-nouveau'; pt.setAttribute('aria-label', 'Nouveau message'); a.appendChild(pt); }
+      if (!nouveau && pt) pt.remove();
+    });
   }
 
   function brancherRecherche() {
@@ -128,15 +154,17 @@
     const params = new URLSearchParams(qs || '');
     const onglet = { '': 'campagnes', campagne: 'campagnes', 'sur-mesure': 'sur-mesure', demande: 'colis',
                      commande: 'colis', colis: 'colis', compte: 'compte', reinitialiser: 'compte',
-                     ambassadeur: 'compte', ac: 'compte' }[morceaux[0] || ''];
+                     ambassadeur: 'compte', ac: 'compte', messages: 'messages' }[morceaux[0] || ''];
     document.querySelectorAll('.nav-bas a, .nav-haut a').forEach((a) => a.classList.toggle('actif', a.dataset.onglet === onglet));
-    // Bouton WhatsApp flottant seulement sur l'accueil (ailleurs il masquerait les prix et boutons)
-    document.getElementById('wa-flottant').hidden = !(etat.groupeur && etat.groupeur.whatsapp) || (morceaux[0] || '') !== '';
+    // Bouton WhatsApp flottant sur toutes les pages (sauf la messagerie, qui a sa propre zone de saisie)
+    const avecWa = !!(etat.groupeur && etat.groupeur.whatsapp) && morceaux[0] !== 'messages';
+    document.getElementById('wa-flottant').hidden = !avecWa;
+    document.body.classList.toggle('avec-wa', avecWa);
     window.scrollTo(0, 0);
 
     const routes = {
       '': vueAccueil, campagne: vueCampagne, commande: vueCommande, 'sur-mesure': vueSurMesure,
-      demande: vueDemande, colis: vueColis, compte: vueCompte, reinitialiser: vueReinitialiser,
+      demande: vueDemande, colis: vueColis, compte: vueCompte, reinitialiser: vueReinitialiser, messages: vueMessages,
       ...espaceAC.routes
     };
     const f = routes[morceaux[0] || ''] || vueAccueil;
@@ -972,6 +1000,22 @@
   }
 
   // ------------------------------------------------------------------
+  // Messages : discussion directe avec l'équipe
+  // ------------------------------------------------------------------
+  async function vueMessages() {
+    if (!exigerCompte()) return;
+    const g = etat.groupeur || {};
+    vue.innerHTML = `
+      <div class="chat-entete"><div><h1>Discuter avec nous</h1>
+        <p class="discret" style="margin:0">Une question sur une commande, un produit, un paiement ? L'équipe vous répond ici, en général dans la journée.</p></div>
+        ${g.whatsapp ? `<a class="btn btn-second btn-petit" href="tel:${esc(g.whatsapp)}">${window.ICO.telephone}Appeler</a>` : ''}</div>
+      <div id="zone-chat"></div>`;
+    etat.canal = await chat.monter(document.getElementById('zone-chat'), etat.session.user.id, etat.session.user.id, {
+      vide: `<p><b>Écrivez-nous</b></p><p>Envoyez un texte, une photo du produit recherché ou un document. Pas de messages vocaux : pour parler de vive voix, appelez-nous.</p>` });
+    majPointMessages();
+  }
+
+  // ------------------------------------------------------------------
   // Compte : connexion, inscription, profil
   // ------------------------------------------------------------------
   function vueCompte(_, params) {
@@ -994,6 +1038,7 @@
         <div class="carte reference-client"><span>Votre référence client</span><b>${esc(p.reference || '—')}</b>
           <small>Communiquez-la à un ambassadeur ou à notre équipe pour être retrouvé rapidement.</small></div>
         ${carteAC}
+        <div data-zone-notifs id="zone-alertes"></div>
         </div><div class="colonne">
         <form class="carte" id="form-profil">
           <label for="p-nom">Nom complet</label><input id="p-nom" required value="${esc(p.nom_complet || '')}">
@@ -1024,6 +1069,8 @@
           if (etaitIncomplet && etat.profil && etat.profil.telephone) location.hash = '#' + (retour || '/');
         });
       });
+      const za = document.getElementById('zone-alertes');
+      notifs.remplirCarte(za).then(() => { if (params.get('alertes')) za.scrollIntoView({ behavior: 'smooth', block: 'center' }); });
       document.getElementById('p-pays').addEventListener('change', (e) => {
         document.getElementById('p-regions').innerHTML = listeRegions(e.target.value);
       });
