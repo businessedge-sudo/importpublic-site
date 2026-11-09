@@ -301,6 +301,37 @@
   // +22897715025 -> +228 97 71 50 25
   const telLisible = (t) => { const d = String(t || '').replace(/\D/g, ''); return d.length === 11 && d.startsWith('228') ? '+228 ' + d.slice(3).replace(/(\d{2})(?=\d)/g, '$1 ') : (t || ''); };
 
+  // Galerie de photos d'une campagne : glisser du doigt, flèches, miniatures
+  function galeriePhotos(c) {
+    const imgs = (Array.isArray(c.images) && c.images.length ? c.images : (c.image_url ? [c.image_url] : [])).map(urlImageCampagne);
+    if (!imgs.length) return '';
+    if (imgs.length === 1) return `<img src="${esc(imgs[0])}" alt="${esc(c.titre)}" class="galerie-unique">`;
+    return `<div class="galerie" data-galerie>
+        <div class="galerie-piste">${imgs.map((u, i) => `<img src="${esc(u)}" alt="${esc(c.titre)} · photo ${i + 1}" loading="${i ? 'lazy' : 'eager'}">`).join('')}</div>
+        <button type="button" class="galerie-fleche g-prec" aria-label="Photo précédente">‹</button>
+        <button type="button" class="galerie-fleche g-suiv" aria-label="Photo suivante">›</button>
+        <span class="galerie-compteur">1 / ${imgs.length}</span>
+      </div>
+      <div class="galerie-minis">${imgs.map((u, i) => `<button type="button" data-aller="${i}" class="${i ? '' : 'actif'}" aria-label="Photo ${i + 1}"><img src="${esc(u)}" alt="" loading="lazy"></button>`).join('')}</div>`;
+  }
+  function brancherGalerie() {
+    const g = document.querySelector('[data-galerie]');
+    if (!g) return;
+    const piste = g.querySelector('.galerie-piste');
+    const n = piste.children.length;
+    const minis = document.querySelectorAll('.galerie-minis button');
+    const courant = () => Math.round(piste.scrollLeft / piste.clientWidth);
+    const aller = (i) => piste.scrollTo({ left: Math.max(0, Math.min(n - 1, i)) * piste.clientWidth, behavior: 'smooth' });
+    piste.addEventListener('scroll', () => {
+      const i = courant();
+      g.querySelector('.galerie-compteur').textContent = `${i + 1} / ${n}`;
+      minis.forEach((m, k) => m.classList.toggle('actif', k === i));
+    }, { passive: true });
+    g.querySelector('.g-prec').addEventListener('click', () => aller(courant() - 1));
+    g.querySelector('.g-suiv').addEventListener('click', () => aller(courant() + 1));
+    minis.forEach((m) => m.addEventListener('click', () => aller(Number(m.dataset.aller))));
+  }
+
   function carteCampagne(c) {
     const I = window.ICO;
     const p = Math.min(100, Math.round((100 * (c.quantite_payee || 0)) / (c.quota || 1)));
@@ -343,7 +374,7 @@
       <div class="deux-colonnes">
       <div class="colonne">
       <div class="carte" style="padding:0;overflow:hidden">
-        ${c.image_url ? `<img src="${esc(urlImageCampagne(c.image_url))}" alt="" style="width:100%;aspect-ratio:4/3;object-fit:cover">` : ''}
+        ${galeriePhotos(c)}
         ${c.description ? `<div style="padding:16px"><h2>Description</h2><p style="white-space:pre-line">${esc(c.description)}</p></div>` : ''}
       </div>
       </div>
@@ -372,6 +403,7 @@
       <div id="zone-commande"></div>
       </div>
       </div>`;
+    brancherGalerie();
 
     const zone = document.getElementById('zone-commande');
     const listeDeja = deja.length ? `<div class="carte"><h2>Vos réservations</h2>${deja.map((o) => `
