@@ -154,7 +154,7 @@
     const params = new URLSearchParams(qs || '');
     const onglet = { '': 'campagnes', campagne: 'campagnes', 'sur-mesure': 'sur-mesure', demande: 'colis',
                      commande: 'colis', colis: 'colis', compte: 'compte', reinitialiser: 'compte',
-                     ambassadeur: 'compte', ac: 'compte', messages: 'messages' }[morceaux[0] || ''];
+                     ambassadeur: 'compte', ac: 'compte', messages: 'messages', document: 'messages' }[morceaux[0] || ''];
     document.querySelectorAll('.nav-bas a, .nav-haut a').forEach((a) => a.classList.toggle('actif', a.dataset.onglet === onglet));
     // Bouton WhatsApp flottant sur toutes les pages (sauf la messagerie, qui a sa propre zone de saisie)
     const avecWa = !!(etat.groupeur && etat.groupeur.whatsapp) && morceaux[0] !== 'messages';
@@ -165,7 +165,7 @@
     const routes = {
       '': vueAccueil, campagne: vueCampagne, commande: vueCommande, 'sur-mesure': vueSurMesure,
       demande: vueDemande, colis: vueColis, compte: vueCompte, reinitialiser: vueReinitialiser, messages: vueMessages,
-      ...espaceAC.routes
+      document: vueDocument, ...espaceAC.routes
     };
     const f = routes[morceaux[0] || ''] || vueAccueil;
     vue.innerHTML = '<div class="chargement">Chargement…</div>';
@@ -606,11 +606,12 @@
     if (error) throw error;
     if (!o) { vue.innerHTML = '<div class="carte vide">Commande introuvable.</div>'; return; }
     const c = o.campagnes;
-    const [{ data: paiements }, { data: historique }, colisHtml, points] = await Promise.all([
+    const [{ data: paiements }, { data: historique }, colisHtml, points, docsHtml] = await Promise.all([
       sb.from('paiements').select('*').eq('commande_id', id).order('created_at', { ascending: false }),
       sb.from('statuts_expedition').select('statut,created_at').eq('campagne_id', c.id).order('created_at'),
       blocColis({ col: 'commande_id', val: id }),
-      chargerPoints()
+      chargerPoints(),
+      blocDocuments('commande_id', id)
     ]);
     const enVerif = (paiements || []).find((p) => p.statut === 'initie');
     const rejete = (paiements || []).find((p) => p.statut === 'echoue');
@@ -686,6 +687,7 @@
         <div style="margin-top:12px">${jauge(c.quantite_payee, c.quota)}</div>
       </div>
       ${colisHtml || reception}
+      ${docsHtml || ''}
       ${corps ? `<div class="carte">${corps}</div>` : ''}
       ${actions}
       ${aide}
@@ -816,11 +818,12 @@
     const { data: d, error } = await sb.from('demandes').select('*').eq('id', id).maybeSingle();
     if (error) throw error;
     if (!d) { vue.innerHTML = '<div class="carte vide">Demande introuvable.</div>'; return; }
-    const [{ data: historique }, { data: paiements }, photoUrl, colisHtml] = await Promise.all([
+    const [{ data: historique }, { data: paiements }, photoUrl, colisHtml, docsHtml] = await Promise.all([
       sb.from('historique_demandes').select('statut,created_at').eq('demande_id', id).order('created_at'),
       sb.from('paiements').select('*').eq('demande_id', id).order('created_at', { ascending: false }),
       d.photo_path ? sb.storage.from('demandes').createSignedUrl(d.photo_path, 3600).then((r) => r.data && r.data.signedUrl) : null,
-      blocColis({ col: 'demande_id', val: id })
+      blocColis({ col: 'demande_id', val: id }),
+      blocDocuments('demande_id', id)
     ]);
     const enVerif = (paiements || []).find((p) => p.statut === 'initie');
     const rejete = (paiements || []).find((p) => p.statut === 'echoue');
@@ -829,12 +832,14 @@
 
     let action = '';
     if (d.statut === 'nouvelle') {
-      action = `<div class="alerte alerte-info">Nous étudions votre demande. Vous recevrez un prix ici, en général sous 48 h.</div>`;
+      action = `<div class="alerte alerte-info">Nous étudions votre demande. Vous recevrez un prix ici, en général sous 48 h.</div>
+        <a class="btn btn-second" href="#/messages">${window.ICO.bulle}Ajouter une précision</a>`;
     } else if (d.statut === 'devis_envoye') {
       action = `<h2>Notre proposition</h2>
         <div class="total" style="border:0;margin:0"><span>Prix total livré à Lomé</span><b>${fcfa(d.montant_devis)}</b></div>
         ${d.note_devis ? `<p style="white-space:pre-line">${esc(d.note_devis)}</p>` : ''}
-        <div class="boutons"><button class="btn btn-ok" id="accepter">Accepter</button><button class="btn btn-ko" id="refuser">Refuser</button></div>`;
+        <div class="boutons"><button class="btn btn-ok" id="accepter">Accepter et payer</button><button class="btn btn-ko" id="refuser">Refuser</button></div>
+        <p class="aide-commande">Une question avant d'accepter ? <a href="#/messages">Écrivez-nous</a>.</p>`;
     } else if (d.statut === 'acceptee') {
       action = (rejete && !enVerif ? `<div class="alerte alerte-ko">Le paiement avec la référence ${esc(rejete.reference_externe)} n'a pas été retrouvé.</div>` : '')
         + blocPaiement({ demandeId: d.id, montant: d.montant_devis, enVerification: enVerif, apres: router });
@@ -889,6 +894,7 @@
       </div><div class="colonne">
       ${colisHtml || ''}
       ${action ? `<div class="carte">${action}</div>` : ''}
+      ${docsHtml || ''}
       ${gestionDemande}
       <div class="carte"><h2>Suivi</h2>${['refusee', 'annulee'].includes(d.statut) ? '<p class="discret">—</p>' : suiviD}</div>
       </div></div>`;
@@ -1013,6 +1019,51 @@
     etat.canal = await chat.monter(document.getElementById('zone-chat'), etat.session.user.id, etat.session.user.id, {
       vide: `<p><b>Écrivez-nous</b></p><p>Envoyez un texte, une photo du produit recherché ou un document. Pas de messages vocaux : pour parler de vive voix, appelez-nous.</p>` });
     majPointMessages();
+  }
+
+  // Document (devis, reçu, avis d'annulation ou de remboursement)
+  // ------------------------------------------------------------------
+  async function vueDocument(id) {
+    if (!exigerCompte()) return;
+    const { data: doc, error } = await sb.from('documents').select('*').eq('id', id).maybeSingle();
+    if (error) throw error;
+    if (!doc) { vue.innerHTML = '<div class="carte vide">Document introuvable.</div>'; return; }
+    let dem = null;
+    if (doc.type === 'devis' && doc.demande_id) {
+      dem = (await sb.from('demandes').select('id,statut').eq('id', doc.demande_id).maybeSingle()).data;
+    }
+    const devisOuvert = doc.type === 'devis' && !doc.remplace && dem && dem.statut === 'devis_envoye';
+    const lienObjet = doc.demande_id ? '#/demande/' + doc.demande_id : doc.commande_id ? '#/commande/' + doc.commande_id : '#/colis';
+    vue.innerHTML = `
+      <a class="retour" href="#/messages">← Messages</a>
+      ${doc.remplace ? '<div class="alerte alerte-info" style="max-width:820px;margin:0 auto 12px">Ce devis a été remplacé par une version plus récente : voyez le dernier message de l\'équipe.</div>' : ''}
+      ${window.IP_DOCS.html(doc)}
+      <div class="doc-actions">
+        ${devisOuvert ? `<button class="btn btn-ok btn-large" id="doc-accepter">${window.ICO.coche}Accepter et payer</button>
+          <button class="btn btn-second" id="doc-refuser">Refuser</button>` : ''}
+        ${doc.type === 'devis' && dem && dem.statut === 'acceptee' ? `<a class="btn btn-large" href="#/demande/${dem.id}">Payer maintenant</a>` : ''}
+        <button class="btn btn-second" id="doc-imprimer">${window.ICO.telecharger}Enregistrer en PDF</button>
+        <a class="btn btn-second" href="${lienObjet}">Voir ma ${doc.commande_id ? 'commande' : 'demande'}</a>
+        <a class="btn btn-second" href="#/messages">${window.ICO.bulle}Poser une question</a>
+      </div>`;
+    document.getElementById('doc-imprimer').addEventListener('click', () => window.print());
+    const rep = (accepte) => (ev) => occupe(ev.currentTarget, async () => {
+      if (!accepte && !confirm('Refuser ce devis ?')) return;
+      const { error: e } = await sb.rpc('repondre_devis', { p_demande: doc.demande_id, p_accepte: accepte });
+      if (e) { toast(msgErreur(e), 'ko'); return; }
+      location.hash = '#/demande/' + doc.demande_id;
+    });
+    const a = document.getElementById('doc-accepter'); if (a) a.addEventListener('click', rep(true));
+    const r = document.getElementById('doc-refuser'); if (r) r.addEventListener('click', rep(false));
+  }
+
+  // Liste des documents d'une demande ou d'une commande
+  async function blocDocuments(col, val) {
+    const { data } = await sb.from('documents').select('id,numero,type,total,remplace,cree_le').eq(col, val).order('cree_le', { ascending: false });
+    if (!data || !data.length) return '';
+    return `<div class="carte"><h2>Mes documents</h2><div class="liste-docs">${data.map((d) => `
+      <a href="#/document/${d.id}"><span><b>${esc(window.IP_DOCS.libelle(d.type))}</b> <small>n° ${esc(d.numero)} · ${esc(date(d.cree_le))}${d.remplace ? ' · remplacé' : ''}</small></span>
+      <b>${fcfa(d.total)}</b></a>`).join('')}</div></div>`;
   }
 
   // ------------------------------------------------------------------
