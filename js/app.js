@@ -750,9 +750,10 @@
       <div class="deux-colonnes"><div class="colonne">
       ${etat.session ? '' : `<div class="alerte alerte-info">Vous devrez vous connecter pour envoyer la demande, afin de recevoir le devis et suivre votre colis.</div>`}
       <form class="carte" id="form-demande">
-        <label for="desc">Quel produit cherchez-vous ?</label>
-        <textarea id="desc" required minlength="5" maxlength="2000" placeholder="Ex. : casque Bluetooth à réduction de bruit, noir, avec boîte d'origine"></textarea>
-        <label for="photo">Photo du produit <small class="discret">(recommandée)</small></label>
+        <label for="desc">Quel produit cherchez-vous ? <small class="discret">(seul champ obligatoire)</small></label>
+        <textarea id="desc" required minlength="2" maxlength="2000" placeholder="Le nom du produit suffit. Ex. : casque Bluetooth noir, micro DJI, perruque…"></textarea>
+        <div class="aide">Écrivez simplement ce que vous voulez : on en discute ensuite dans votre messagerie, et nous vous proposons des photos.</div>
+        <label for="photo">Photo du produit <small class="discret">(facultatif)</small></label>
         <input id="photo" type="file" accept="image/*">
         <div class="aide">Une capture d'écran suffit. La photo est réduite avant l'envoi.</div>
         <img id="apercu" class="photo-apercu" alt="" hidden>
@@ -761,9 +762,9 @@
         <div class="aide">Pas de lien ? Aucun problème : une photo ou une bonne description suffit, nous trouvons le produit.</div>
         <div class="rangee">
           <div><label for="qte-d">Quantité</label><input id="qte-d" type="number" inputmode="numeric" min="1" value="1" required></div>
-          <div><label for="budget">Budget (F CFA)</label><input id="budget" type="number" inputmode="numeric" min="0" placeholder="Optionnel"></div>
+          <div><label for="budget">Budget (F CFA) <small class="discret">(facultatif)</small></label><input id="budget" type="number" inputmode="numeric" min="0" placeholder="Optionnel"></div>
         </div>
-        <label for="transport">Transport souhaité</label>
+        <label for="transport">Transport souhaité <small class="discret">(facultatif)</small></label>
         <select id="transport"><option value="">Pas de préférence</option><option value="aerien">Aérien (≈ 3 semaines, plus cher)</option>
           <option value="maritime">Maritime (30 à 45 jours, moins cher)</option></select>
         <button class="btn btn-large" style="margin-top:16px">Envoyer ma demande</button>
@@ -808,8 +809,8 @@
           photo_path
         }).select('id').single();
         if (error) { toast(msgErreur(error), 'ko'); return; }
-        toast('Demande envoyée ! Nous revenons vers vous avec un prix.');
-        location.hash = '#/demande/' + data.id;
+        toast('Demande envoyée ! On continue dans votre messagerie.');
+        location.hash = '#/messages';
       });
     });
   }
@@ -872,7 +873,7 @@
     const gestionDemande = annulable ? `<div class="carte">
         <h2>Gérer ma demande</h2>
         ${d.statut === 'nouvelle' ? `<form id="form-modif-demande" hidden>
-            <label for="md-desc">Description</label><textarea id="md-desc" required minlength="5" maxlength="2000">${esc(d.description)}</textarea>
+            <label for="md-desc">Description</label><textarea id="md-desc" required minlength="2" maxlength="2000">${esc(d.description)}</textarea>
             <label for="md-lien">Lien (facultatif)</label><input id="md-lien" type="text" inputmode="url" value="${esc(d.lien || '')}">
             <div class="rangee"><div><label for="md-qte">Quantité</label><input id="md-qte" type="number" min="1" value="${d.quantite}"></div>
               <div><label for="md-budget">Budget (F CFA)</label><input id="md-budget" type="number" min="0" value="${esc(d.budget || '')}"></div></div>
