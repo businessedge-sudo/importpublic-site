@@ -752,12 +752,13 @@
       <form class="carte" id="form-demande">
         <label for="desc">Quel produit cherchez-vous ?</label>
         <textarea id="desc" required minlength="5" maxlength="2000" placeholder="Ex. : casque Bluetooth à réduction de bruit, noir, avec boîte d'origine"></textarea>
-        <label for="photo">Photo du produit</label>
+        <label for="photo">Photo du produit <small class="discret">(recommandée)</small></label>
         <input id="photo" type="file" accept="image/*">
         <div class="aide">Une capture d'écran suffit. La photo est réduite avant l'envoi.</div>
         <img id="apercu" class="photo-apercu" alt="" hidden>
-        <label for="lien">Lien (Alibaba, 1688, Temu, AliExpress…)</label>
-        <input id="lien" type="url" inputmode="url" placeholder="https://…">
+        <label for="lien">Lien du produit <small class="discret">(facultatif)</small></label>
+        <input id="lien" type="text" inputmode="url" autocomplete="off" placeholder="Si vous l'avez : Alibaba, Temu, AliExpress, TikTok…">
+        <div class="aide">Pas de lien ? Aucun problème : une photo ou une bonne description suffit, nous trouvons le produit.</div>
         <div class="rangee">
           <div><label for="qte-d">Quantité</label><input id="qte-d" type="number" inputmode="numeric" min="1" value="1" required></div>
           <div><label for="budget">Budget (F CFA)</label><input id="budget" type="number" inputmode="numeric" min="0" placeholder="Optionnel"></div>
@@ -800,7 +801,7 @@
         const { data, error } = await sb.from('demandes').insert({
           client_id: uid,
           description: document.getElementById('desc').value.trim(),
-          lien: document.getElementById('lien').value.trim() || null,
+          lien: normLien(document.getElementById('lien').value),
           quantite: Math.max(1, parseInt(document.getElementById('qte-d').value, 10) || 1),
           budget: budget ? parseInt(budget, 10) : null,
           mode_transport: document.getElementById('transport').value || null,
@@ -811,6 +812,15 @@
         location.hash = '#/demande/' + data.id;
       });
     });
+  }
+
+  // Lien facultatif : on accepte « temu.com/… » ou tout texte collé ; on ajoute https:// si besoin
+  function normLien(v) {
+    const t = (v || '').trim();
+    if (!t) return null;
+    if (/^https?:\/\//i.test(t)) return t.slice(0, 1000);
+    if (/^[\w-]+(\.[\w-]+)+(\/\S*)?$/.test(t)) return 'https://' + t.slice(0, 990);
+    return t.slice(0, 1000);
   }
 
   async function vueDemande(id) {
@@ -863,7 +873,7 @@
         <h2>Gérer ma demande</h2>
         ${d.statut === 'nouvelle' ? `<form id="form-modif-demande" hidden>
             <label for="md-desc">Description</label><textarea id="md-desc" required minlength="5" maxlength="2000">${esc(d.description)}</textarea>
-            <label for="md-lien">Lien</label><input id="md-lien" type="url" value="${esc(d.lien || '')}">
+            <label for="md-lien">Lien (facultatif)</label><input id="md-lien" type="text" inputmode="url" value="${esc(d.lien || '')}">
             <div class="rangee"><div><label for="md-qte">Quantité</label><input id="md-qte" type="number" min="1" value="${d.quantite}"></div>
               <div><label for="md-budget">Budget (F CFA)</label><input id="md-budget" type="number" min="0" value="${esc(d.budget || '')}"></div></div>
             <div class="boutons"><button class="btn">Enregistrer</button><button type="button" class="btn btn-second" id="md-fermer">Fermer</button></div>
@@ -887,7 +897,7 @@
         <dl class="cle-valeur" style="margin-top:12px">
           <dt>Quantité</dt><dd>${d.quantite}</dd>
           ${d.budget ? `<dt>Votre budget</dt><dd>${fcfa(d.budget)}</dd>` : ''}
-          ${d.lien ? `<dt>Lien</dt><dd><a href="${esc(d.lien)}" target="_blank" rel="noopener">Ouvrir</a></dd>` : ''}
+          ${d.lien ? `<dt>Lien</dt><dd>${/^https?:\/\//i.test(d.lien) ? `<a href="${esc(d.lien)}" target="_blank" rel="noopener">Ouvrir</a>` : esc(d.lien)}</dd>` : ''}
           <dt>Envoyée le</dt><dd>${date(d.created_at, true)}</dd>
         </dl>
       </div>
@@ -928,7 +938,7 @@
           const { error } = await sb.rpc('modifier_demande', {
             p_demande: d.id, p_description: document.getElementById('md-desc').value,
             p_quantite: parseInt(document.getElementById('md-qte').value, 10) || 1,
-            p_budget: b ? parseInt(b, 10) : null, p_lien: document.getElementById('md-lien').value
+            p_budget: b ? parseInt(b, 10) : null, p_lien: normLien(document.getElementById('md-lien').value) || ''
           });
           if (error) { toast(msgErreur(error), 'ko'); return; }
           toast('Demande modifiée'); router();
