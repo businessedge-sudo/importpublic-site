@@ -154,7 +154,7 @@
     const params = new URLSearchParams(qs || '');
     const onglet = { '': 'campagnes', campagne: 'campagnes', 'sur-mesure': 'sur-mesure', demande: 'colis',
                      commande: 'colis', colis: 'colis', compte: 'compte', reinitialiser: 'compte',
-                     ambassadeur: 'compte', ac: 'compte', messages: 'messages', document: 'messages' }[morceaux[0] || ''];
+                     ambassadeur: 'compte', ac: 'compte', messages: 'messages', document: 'messages', avis: 'colis' }[morceaux[0] || ''];
     document.querySelectorAll('.nav-bas a, .nav-haut a').forEach((a) => a.classList.toggle('actif', a.dataset.onglet === onglet));
     // Bouton WhatsApp flottant sur toutes les pages (sauf la messagerie, qui a sa propre zone de saisie)
     const avecWa = !!(etat.groupeur && etat.groupeur.whatsapp) && morceaux[0] !== 'messages';
@@ -165,7 +165,7 @@
     const routes = {
       '': vueAccueil, campagne: vueCampagne, commande: vueCommande, 'sur-mesure': vueSurMesure,
       demande: vueDemande, colis: vueColis, compte: vueCompte, reinitialiser: vueReinitialiser, messages: vueMessages,
-      document: vueDocument, ...espaceAC.routes
+      document: vueDocument, avis: vueAvis, ...espaceAC.routes
     };
     const f = routes[morceaux[0] || ''] || vueAccueil;
     vue.innerHTML = '<div class="chargement">Chargement…</div>';
@@ -1106,13 +1106,53 @@
     const r = document.getElementById('doc-refuser'); if (r) r.addEventListener('click', rep(false));
   }
 
+  // Avis après retrait : note sur 5 + quelques mots
+  async function vueAvis(colisId) {
+    if (!exigerCompte()) return;
+    const [{ data: k }, { data: deja }] = await Promise.all([
+      sb.from('colis').select('id,reference,statut,commande_id,demande_id,commandes(campagnes(titre,image_url)),demandes(description)').eq('id', colisId).maybeSingle(),
+      sb.from('avis').select('note,commentaire').eq('colis_id', colisId).maybeSingle()
+    ]);
+    if (!k) { vue.innerHTML = '<div class="carte vide">Colis introuvable.</div>'; return; }
+    const titre = (k.commandes && k.commandes.campagnes && k.commandes.campagnes.titre) || (k.demandes && k.demandes.description) || 'votre article';
+    let note = deja ? deja.note : 0;
+    vue.innerHTML = `
+      <a class="retour" href="#/colis">← Mes colis</a>
+      <form class="carte avis-carte" id="form-avis">
+        <h1>Votre avis</h1>
+        <p>Que pensez-vous de « ${esc(titre)} » ? Votre retour nous aide à améliorer notre service et permet aussi à d'autres clients de commander en toute confiance.</p>
+        <div class="etoiles" role="radiogroup" aria-label="Note sur 5">${[1, 2, 3, 4, 5].map((i) => `<button type="button" data-n="${i}" aria-label="${i} sur 5">★</button>`).join('')}</div>
+        <p class="discret" id="avis-libelle"></p>
+        <label for="avis-txt">Quelques mots sur votre expérience <small class="discret">(facultatif)</small></label>
+        <textarea id="avis-txt" maxlength="1000" placeholder="Qualité du produit, délai, retrait au point…">${esc((deja && deja.commentaire) || '')}</textarea>
+        <button class="btn btn-large" style="margin-top:12px">${deja ? 'Mettre à jour mon avis' : 'Envoyer mon avis'}</button>
+      </form>`;
+    const LIB = ['', 'Pas satisfait', 'Peut mieux faire', 'Correct', 'Satisfait', 'Très satisfait'];
+    const peindre = () => {
+      vue.querySelectorAll('.etoiles button').forEach((b) => b.classList.toggle('on', Number(b.dataset.n) <= note));
+      document.getElementById('avis-libelle').textContent = note ? LIB[note] : 'Touchez une étoile pour noter.';
+    };
+    peindre();
+    vue.querySelectorAll('.etoiles button').forEach((b) => b.addEventListener('click', () => { note = Number(b.dataset.n); peindre(); }));
+    document.getElementById('form-avis').addEventListener('submit', (ev) => {
+      ev.preventDefault();
+      if (!note) { toast('Choisissez une note de 1 à 5 étoiles', 'ko'); return; }
+      occupe(ev.target.querySelector('button'), async () => {
+        const { error: e } = await sb.rpc('donner_avis', { p_colis: colisId, p_note: note, p_commentaire: document.getElementById('avis-txt').value });
+        if (e) { toast(msgErreur(e), 'ko'); return; }
+        vue.innerHTML = `<div class="carte vide"><span class="dm-cube grand">${window.ICO.coche}</span><h1>Merci pour votre avis !</h1>
+          <p>Votre retour compte beaucoup pour nous. À bientôt sur Import Public !</p><a class="btn" href="#/">Voir les campagnes</a></div>`;
+      });
+    });
+  }
+
   // Liste des documents d'une demande ou d'une commande
   async function blocDocuments(col, val) {
     const { data } = await sb.from('documents').select('id,numero,type,total,remplace,cree_le').eq(col, val).order('cree_le', { ascending: false });
     if (!data || !data.length) return '';
     return `<div class="carte"><h2>Mes documents</h2><div class="liste-docs">${data.map((d) => `
       <a href="#/document/${d.id}"><span><b>${esc(window.IP_DOCS.libelle(d.type))}</b> <small>n° ${esc(d.numero)} · ${esc(date(d.cree_le))}${d.remplace ? ' · remplacé' : ''}</small></span>
-      <b>${fcfa(d.total)}</b></a>`).join('')}</div></div>`;
+      <b>${d.type === 'bon_retrait' ? 'Code' : fcfa(d.total)}</b></a>`).join('')}</div></div>`;
   }
 
   // ------------------------------------------------------------------

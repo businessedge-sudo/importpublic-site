@@ -268,7 +268,7 @@ window.IP_AC = function (ctx) {
       sb.from('campagnes').select('id,titre,prix_unitaire,image_url,date_cloture').eq('statut', 'ouverte')
         .gt('date_cloture', new Date().toISOString()).order('date_cloture').limit(20)
     ]);
-    const message = 'Achetons en Chine, ensemble ! Commandes groupées livrées à Lomé, paiement T-Money ou Flooz. Inscris-toi ici :';
+    const message = 'Achetons en Chine, ensemble ! Commandes groupées livrées à Lomé, paiement T-Money ou Flooz. Inscrivez-vous ici :';
     vue.innerHTML = coquille('lien', `
       <div class="deux-colonnes"><div class="colonne">
         <div class="carte carte-lien">
