@@ -313,6 +313,7 @@
       <div class="campagne-corps">
         <a class="campagne-titre" href="#/campagne/${c.id}">${esc(c.titre)}</a>
         <div class="prix">${fcfa(c.prix_unitaire)}${remise >= 5 ? ` <s class="prix-barre">${fcfa(c.prix_reference)}</s>` : ''}</div>
+        ${remise >= 5 ? `<div class="economie">Vous économisez <b>${fcfa(c.prix_reference - c.prix_unitaire)}</b> par rapport au prix à Lomé</div>` : ''}
         <div class="social">${I.personnes}<span>${esc(personnes(c.nb_clients || 0))}</span></div>
         <div class="jauge-ligne"><div class="jauge"><div class="jauge-barre" style="width:${p}%"></div></div><b>${p}%</b></div>
         <a class="btn btn-large btn-reserver" href="#/campagne/${c.id}">${I.panier}Réserver ma part</a>
@@ -353,11 +354,17 @@
             <h1>${esc(c.titre)}</h1>${badge(ouverte ? 'ouverte' : c.statut)}
           </div>
           <div class="prix">${fcfa(c.prix_unitaire)}${c.prix_reference > c.prix_unitaire ? ` <s class="prix-barre">${fcfa(c.prix_reference)}</s>` : ''} <small class="discret">par unité, ${c.type_prix === 'TTC' ? 'livré, tout compris' : 'hors transport'}</small></div>
+          ${c.prix_reference > c.prix_unitaire ? `<div class="encart-economie">
+            <div><span>Prix constaté à Lomé</span><b>${fcfa(c.prix_reference)}</b></div>
+            <div><span>Prix Import Public</span><b>${fcfa(c.prix_unitaire)}</b></div>
+            <div class="encart-total"><span>Vous économisez</span><b>${fcfa(c.prix_reference - c.prix_unitaire)} (-${remiseDe(c)} %)</b></div>
+            <p>En échange : un peu de patience. Nous achetons en gros directement en Chine${c.mode_transport === 'maritime' ? ' et expédions par bateau' : ''}, c'est ce qui fait baisser le prix.</p>
+          </div>` : ''}
           <p class="social-detail">${esc(personnes(c.nb_clients || 0))}</p>
           ${c.type_prix === 'HT' && c.frais_transport_unitaire ? `<p class="discret">Transport à régler à l'arrivée : environ ${fcfa(c.frais_transport_unitaire)} par unité.</p>` : ''}
           <div id="zone-jauge" style="margin:12px 0">${jauge(c.quantite_payee, c.quota)}</div>
           <dl class="cle-valeur">
-            <dt>Transport</dt><dd>${esc(lib(c.mode_transport))} ${c.mode_transport === 'aerien' ? '(environ 3 semaines)' : '(30 à 45 jours)'}</dd>
+            <dt>Transport</dt><dd>${esc(lib(c.mode_transport))} ${c.mode_transport === 'aerien' ? '(environ 3 semaines après la clôture)' : '(environ 45 à 60 jours après la clôture)'}</dd>
             <dt>Clôture</dt><dd>${date(c.date_cloture, true)} · ${esc(joursRestants(c.date_cloture))}</dd>
           </dl>
         </div>
