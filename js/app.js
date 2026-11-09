@@ -343,8 +343,7 @@
         <span class="pastille-delai">${esc(joursRestants(c.date_cloture))}</span></a>
       <div class="campagne-corps">
         <a class="campagne-titre" href="#/campagne/${c.id}">${esc(c.titre)}</a>
-        <div class="prix">${fcfa(c.prix_unitaire)}${remise >= 5 ? ` <s class="prix-barre">${fcfa(c.prix_reference)}</s>` : ''}</div>
-        ${remise >= 5 ? `<div class="economie">Vous économisez <b>${fcfa(c.prix_reference - c.prix_unitaire)}</b> par rapport au prix à Lomé</div>` : ''}
+        ${window.IA.blocPrix(c)}
         <div class="social">${I.personnes}<span>${esc(personnes(c.nb_clients || 0))}</span></div>
         <div class="jauge-ligne"><div class="jauge"><div class="jauge-barre" style="width:${p}%"></div></div><b>${p}%</b></div>
         <a class="btn btn-large btn-reserver" href="#/campagne/${c.id}">${I.panier}Réserver ma part</a>
