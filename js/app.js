@@ -945,7 +945,7 @@
       ${action ? `<div class="carte">${action}</div>` : ''}
       ${docsHtml || ''}
       ${gestionDemande}
-      <div class="carte"><h2>Suivi</h2>${['refusee', 'annulee'].includes(d.statut) ? '<p class="discret">—</p>' : suiviD}</div>
+      <div class="carte"><h2>Suivi</h2>${['refusee', 'annulee'].includes(d.statut) ? '<p class="discret">-</p>' : suiviD}</div>
       </div></div>`;
     brancherGestionDemande(d);
     const bRec = document.getElementById('confirmer-reception');
@@ -1135,7 +1135,7 @@
         ${!p.telephone ? `<div class="alerte alerte-alerte"><b>Dernière étape : votre numéro WhatsApp.</b>
           C'est sur ce numéro que nous vous prévenons à chaque étape de votre commande.</div>` : ''}
         <div class="deux-colonnes"><div class="colonne">
-        <div class="carte reference-client"><span>Votre référence client</span><b>${esc(p.reference || '—')}</b>
+        <div class="carte reference-client"><span>Votre référence client</span><b>${esc(p.reference || '-')}</b>
           <small>Communiquez-la à un ambassadeur ou à notre équipe pour être retrouvé rapidement.</small></div>
         ${carteAC}
         <div data-zone-notifs id="zone-alertes"></div>

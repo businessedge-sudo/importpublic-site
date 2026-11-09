@@ -365,8 +365,8 @@ window.IP_AC = function (ctx) {
         <div class="carte">
           <div style="display:flex;justify-content:space-between;gap:10px"><h2>${esc(f.nom)}</h2>${f.est_mon_client ? '<span class="badge badge-ok">Votre client</span>' : ''}</div>
           <dl class="cle-valeur">
-            <dt>Référence</dt><dd><b>${esc(f.reference || '—')}</b></dd>
-            <dt>Région</dt><dd>${esc(f.region || '—')}</dd>
+            <dt>Référence</dt><dd><b>${esc(f.reference || '-')}</b></dd>
+            <dt>Région</dt><dd>${esc(f.region || '-')}</dd>
             <dt>Téléphone</dt><dd>${esc(f.telephone)}</dd>
             <dt>Inscrit le</dt><dd>${date(f.inscrit_le)}</dd>
             <dt>Commandes</dt><dd>${f.nb_commandes}${f.derniere_activite ? ' · dernière le ' + date(f.derniere_activite) : ''}</dd>
