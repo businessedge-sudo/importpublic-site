@@ -576,12 +576,13 @@
   // ------------------------------------------------------------------
   // Bloc de paiement par numéro marchand
   // ------------------------------------------------------------------
-  function blocPaiement({ commandeId, demandeId, montant, enVerification, apres }) {
+  function blocPaiement({ commandeId, demandeId, montant, enVerification, enLigne, apres }) {
     if (enVerification) {
       return `<div class="alerte alerte-alerte"><b>Paiement en cours de vérification.</b><br>
         Référence ${esc(enVerification.reference_externe)} · ${esc(lib(enVerification.operateur))}. Nous validons sous 24 h maximum.</div>`;
     }
     const g = etat.groupeur || {};
+    if (g.paiement_en_ligne) return blocPaiementEnLigne({ commandeId, demandeId, montant, enLigne, apres });
     const numeros = [['tmoney', g.numero_marchand_tmoney], ['flooz', g.numero_marchand_flooz]].filter(([, n]) => n);
     if (!numeros.length) {
       return `<div class="paiement"><b>Paiement</b><p style="margin-top:6px">Le numéro marchand sera affiché ici très bientôt.
@@ -591,6 +592,145 @@
     setTimeout(() => brancherPaiement({ commandeId, demandeId, apres }), 0);
     return `<div class="paiement" id="bloc-paiement">
       <h2>Payer ${fcfa(montant)}</h2>
+      <ol class="etapes-paiement">
+        <li>Envoyez exactement <b>${fcfa(montant)}</b> au numéro marchand${g.nom_marchand ? ` <b>${esc(g.nom_marchand)}</b>` : ''} :</li>
+      </ol>
+      ${numeros.map(([op, n]) => `<div class="numero-marchand"><span>${esc(lib(op))}</span><b>${esc(n)}</b>
+        <button type="button" class="btn btn-second btn-petit" data-copier="${esc(n)}">Copier</button></div>`).join('')}
+      <ol class="etapes-paiement" start="2"><li>Recopiez ci-dessous la référence du SMS de confirmation.</li></ol>
+      <form id="form-paiement">
+        <label for="op">Opérateur utilisé</label>
+        <select id="op" required>${numeros.map(([op]) => `<option value="${op}">${esc(lib(op))}</option>`).join('')}</select>
+        <label for="ref">Référence de la transaction</label>
+        <input id="ref" required minlength="4" autocomplete="off" placeholder="Ex. : CI251031.1234.A56789">
+        <label for="num">Numéro qui a payé</label>
+        <input id="num" type="tel" inputmode="tel" placeholder="90 00 00 00" value="${esc(etat.profil && etat.profil.telephone || '')}">
+        <button class="btn btn-large" style="margin-top:14px">J'ai payé, envoyer la référence</button>
+      </form></div>`;
+  }
+
+  // ------------------------------------------------------------------
+  // Paiement en ligne (PayGate) : le client reçoit la demande sur son téléphone,
+  // nous vérifions nous-mêmes auprès de PayGate, puis le reçu apparaît dans « Mes documents ».
+  // ------------------------------------------------------------------
+  function devinerReseau(tel) {
+    const n = String(tel || '').replace(/\D/g, '').replace(/^228/, '');
+    const p = n.slice(0, 2);
+    if (['90', '91', '92', '93', '70', '71', '72', '73'].includes(p)) return 'TMONEY';
+    if (['96', '97', '98', '99', '79', '78', '77', '76'].includes(p)) return 'FLOOZ';
+    return '';
+  }
+
+  async function appelPaygate(corps) {
+    const { data, error } = await sb.functions.invoke('paygate', { body: corps });
+    if (error) {
+      let m = '';
+      try { m = (await error.context.json()).message; } catch { m = ''; }
+      return { ok: false, message: m || 'Connexion impossible. Vérifiez votre réseau et réessayez.' };
+    }
+    return data || { ok: false, message: 'Réponse vide' };
+  }
+
+  function blocPaiementEnLigne({ commandeId, demandeId, montant, enLigne, apres }) {
+    const g = etat.groupeur || {};
+    const tel = String(etat.profil && etat.profil.telephone || '').replace(/^\+?228/, '').replace(/\D/g, '');
+    const reseau = devinerReseau(tel) || 'TMONEY';
+    const numeros = [['tmoney', g.numero_marchand_tmoney], ['flooz', g.numero_marchand_flooz]].filter(([, n]) => n);
+    setTimeout(() => brancherPaiementEnLigne({ commandeId, demandeId, montant, enLigne, apres }), 0);
+    const attente = `<div class="pg-attente" id="pg-attente" ${enLigne ? '' : 'hidden'}>
+        <div class="pg-tel">${window.ICO.telephone || ''}</div>
+        <h3>Validez le paiement sur votre téléphone</h3>
+        <p>Une demande de <b>${fcfa(montant)}</b> vient d'être envoyée sur votre numéro.
+          Composez votre code secret T-Money ou Flooz pour confirmer. Gardez cette page ouverte : la confirmation s'affiche ici.</p>
+        <p class="pg-etat" id="pg-etat"><span class="pg-point"></span>En attente de votre confirmation…</p>
+        <div class="boutons"><button type="button" class="btn btn-second" id="pg-verifier">Vérifier maintenant</button>
+          <button type="button" class="btn btn-lien" id="pg-recommencer">Recommencer</button></div>
+      </div>`;
+    return `<div class="paiement" id="bloc-paiement-ligne">
+      <h2>Payer ${fcfa(montant)}</h2>
+      <form id="form-pg" ${enLigne ? 'hidden' : ''}>
+        <p class="aide" style="margin-top:0">Paiement sécurisé par Mobile Money. Vous recevez la demande sur votre téléphone et vous la validez avec votre code secret. Votre reçu est généré automatiquement.</p>
+        <div class="pg-reseaux" role="radiogroup" aria-label="Réseau">
+          <label class="pg-reseau"><input type="radio" name="pg-reseau" value="TMONEY" ${reseau === 'TMONEY' ? 'checked' : ''}><span>T-Money</span></label>
+          <label class="pg-reseau"><input type="radio" name="pg-reseau" value="FLOOZ" ${reseau === 'FLOOZ' ? 'checked' : ''}><span>Flooz</span></label>
+        </div>
+        <label for="pg-num">Numéro Mobile Money qui va payer</label>
+        <div class="pg-numero"><span>+228</span><input id="pg-num" type="tel" inputmode="numeric" maxlength="11" required placeholder="90 00 00 00" value="${esc(tel)}"></div>
+        <button class="btn btn-large btn-ok" style="margin-top:14px">Payer ${fcfa(montant)}</button>
+      </form>
+      ${attente}
+      ${numeros.length ? `<details class="pg-manuel"><summary>Vous préférez payer au numéro marchand ?</summary>
+        ${blocPaiementManuel({ commandeId, demandeId, montant, numeros, apres })}</details>` : ''}
+    </div>`;
+  }
+
+  function brancherPaiementEnLigne({ commandeId, demandeId, montant, enLigne, apres }) {
+    const bloc = document.getElementById('bloc-paiement-ligne');
+    if (!bloc) return;
+    const form = document.getElementById('form-pg');
+    const attente = document.getElementById('pg-attente');
+    const etatTxt = document.getElementById('pg-etat');
+    const num = document.getElementById('pg-num');
+    let paiementId = enLigne ? enLigne.id : null;
+    let minuteur = null;
+    let essais = 0;
+
+    num.addEventListener('input', () => {
+      const r = devinerReseau(num.value);
+      if (r) { const radio = bloc.querySelector(`input[name=pg-reseau][value=${r}]`); if (radio) radio.checked = true; }
+    });
+
+    const arreter = () => { if (minuteur) { clearTimeout(minuteur); minuteur = null; } };
+    const surConfirme = () => {
+      arreter();
+      etatTxt.innerHTML = `${window.ICO.coche || ''}Paiement reçu, merci ! Votre reçu est disponible dans « Mes documents ».`;
+      etatTxt.classList.add('ok');
+      toast('Paiement confirmé. Votre reçu est prêt.');
+      setTimeout(apres, 1500);
+    };
+    const verifier = async (manuel) => {
+      if (!paiementId || !document.body.contains(bloc)) { arreter(); return; }
+      const r = await appelPaygate({ action: 'verifier', paiement: paiementId });
+      if (r.ok && r.etat === 'confirme') return surConfirme();
+      if (r.ok && r.etat === 'echoue') {
+        arreter();
+        toast('Le paiement a expiré ou a été annulé. Vous pouvez recommencer.', 'ko');
+        paiementId = null; attente.hidden = true; form.hidden = false;
+        return;
+      }
+      if (manuel) toast(r.ok ? 'Pas encore confirmé. Validez la demande sur votre téléphone.' : r.message, r.ok ? '' : 'ko');
+      essais++;
+      if (essais < 36) minuteur = setTimeout(() => verifier(false), 5000);
+      else etatTxt.innerHTML = '<span class="pg-point"></span>Toujours en attente. Si vous avez validé, la confirmation arrivera dans quelques minutes : nous vérifions automatiquement.';
+    };
+    window.addEventListener('hashchange', arreter, { once: true });
+
+    form.addEventListener('submit', (ev) => {
+      ev.preventDefault();
+      const chiffres = num.value.replace(/\D/g, '').replace(/^228/, '');
+      if (chiffres.length !== 8) { toast('Entrez un numéro togolais à 8 chiffres.', 'ko'); return; }
+      const reseau = (bloc.querySelector('input[name=pg-reseau]:checked') || {}).value;
+      occupe(form.querySelector('button'), async () => {
+        const r = await appelPaygate({ action: 'payer', commande: commandeId || null, demande: demandeId || null, numero: chiffres, reseau });
+        if (!r.ok) { toast(r.message || 'Le paiement n\'a pas pu être lancé.', 'ko'); return; }
+        paiementId = r.paiement; essais = 0;
+        form.hidden = true; attente.hidden = false;
+        etatTxt.classList.remove('ok');
+        etatTxt.innerHTML = '<span class="pg-point"></span>En attente de votre confirmation…';
+        minuteur = setTimeout(() => verifier(false), 6000);
+      });
+    });
+    document.getElementById('pg-verifier').addEventListener('click', (ev) => occupe(ev.currentTarget, () => { arreter(); return verifier(true); }));
+    document.getElementById('pg-recommencer').addEventListener('click', () => {
+      arreter(); paiementId = null; attente.hidden = true; form.hidden = false;
+    });
+    if (paiementId) minuteur = setTimeout(() => verifier(false), 1000);
+    brancherPaiement({ commandeId, demandeId, apres });
+  }
+
+  function blocPaiementManuel({ montant, numeros }) {
+    const g = etat.groupeur || {};
+    return `<div id="bloc-paiement">
       <ol class="etapes-paiement">
         <li>Envoyez exactement <b>${fcfa(montant)}</b> au numéro marchand${g.nom_marchand ? ` <b>${esc(g.nom_marchand)}</b>` : ''} :</li>
       </ol>
@@ -648,8 +788,10 @@
       chargerPoints(),
       blocDocuments('commande_id', id)
     ]);
-    const enVerif = (paiements || []).find((p) => p.statut === 'initie');
-    const rejete = (paiements || []).find((p) => p.statut === 'echoue');
+    const manuels = (paiements || []).filter((p) => p.agregateur !== 'paygate');
+    const enVerif = manuels.find((p) => p.statut === 'initie');
+    const rejete = manuels.find((p) => p.statut === 'echoue');
+    const enLigne = (paiements || []).find((p) => p.agregateur === 'paygate' && p.statut === 'initie');
     const aConfirmer = o.confirmation === 'en_attente_client' && o.statut === 'en_attente_paiement';
     const point = points.find((p) => p.id === o.point_id);
 
@@ -664,7 +806,7 @@
           <button class="btn btn-ko" id="refuser-cmd">Ce n'est pas ma commande</button></div>`;
     } else if (o.statut === 'en_attente_paiement') {
       corps = (rejete && !enVerif ? `<div class="alerte alerte-ko">Le paiement avec la référence ${esc(rejete.reference_externe)} n'a pas été retrouvé. Vérifiez la référence ou contactez-nous.</div>` : '')
-        + blocPaiement({ commandeId: o.id, montant: o.montant_total, enVerification: enVerif, apres: router });
+        + blocPaiement({ commandeId: o.id, montant: o.montant_total, enVerification: enVerif, enLigne, apres: router });
     } else if (o.statut === 'a_rembourser') {
       corps = `<div class="alerte alerte-ko">La campagne n'a pas atteint son quota. Vous allez être remboursé de ${fcfa(o.montant_total)}.</div>`;
     } else if (o.statut === 'remboursee') {
@@ -871,8 +1013,10 @@
       blocColis({ col: 'demande_id', val: id }),
       blocDocuments('demande_id', id)
     ]);
-    const enVerif = (paiements || []).find((p) => p.statut === 'initie');
-    const rejete = (paiements || []).find((p) => p.statut === 'echoue');
+    const manuels = (paiements || []).filter((p) => p.agregateur !== 'paygate');
+    const enVerif = manuels.find((p) => p.statut === 'initie');
+    const rejete = manuels.find((p) => p.statut === 'echoue');
+    const enLigne = (paiements || []).find((p) => p.agregateur === 'paygate' && p.statut === 'initie');
     const suiviD = await suiviDemandeDetaille(d, historique);
     memo.ecrire('ip_vu_d_' + d.id, Date.now());
 
@@ -888,7 +1032,7 @@
         <p class="aide-commande">Une question avant d'accepter ? <a href="#/messages">Écrivez-nous</a>.</p>`;
     } else if (d.statut === 'acceptee') {
       action = (rejete && !enVerif ? `<div class="alerte alerte-ko">Le paiement avec la référence ${esc(rejete.reference_externe)} n'a pas été retrouvé.</div>` : '')
-        + blocPaiement({ demandeId: d.id, montant: d.montant_devis, enVerification: enVerif, apres: router });
+        + blocPaiement({ demandeId: d.id, montant: d.montant_devis, enVerification: enVerif, enLigne, apres: router });
     } else if (d.statut === 'arrivee' && colisHtml) {
       action = '';
     } else if (d.statut === 'arrivee') {
