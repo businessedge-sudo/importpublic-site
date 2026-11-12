@@ -187,7 +187,7 @@
   // ------------------------------------------------------------------
   async function vueAccueil() {
     const { data, error } = await sb.from('campagnes')
-      .select('id,titre,prix_unitaire,prix_reference,type_prix,quota,quantite_payee,nb_clients,date_cloture,mode_transport,statut,image_url')
+      .select('id,titre,prix_unitaire,prix_reference,type_prix,date_cloture,ouverte_le,created_at,mode_transport,statut,image_url')
       .neq('statut', 'brouillon').order('date_cloture', { ascending: true }).limit(60);
     if (error) throw error;
 
@@ -334,18 +334,16 @@
 
   function carteCampagne(c) {
     const I = window.ICO;
-    const p = Math.min(100, Math.round((100 * (c.quantite_payee || 0)) / (c.quota || 1)));
     const remise = remiseDe(c);
     return `<article class="campagne" data-titre="${esc(c.titre.toLowerCase())}">
       <a class="campagne-image" href="#/campagne/${c.id}" aria-label="${esc(c.titre)}">
         <img src="${esc(urlImageCampagne(c.image_url))}" alt="" loading="lazy">
         ${remise >= 5 ? `<span class="pastille-remise">-${remise}%</span>` : ''}
-        <span class="pastille-delai">${esc(joursRestants(c.date_cloture))}</span></a>
+</a>
       <div class="campagne-corps">
         <a class="campagne-titre" href="#/campagne/${c.id}">${esc(c.titre)}</a>
         ${window.IA.blocPrix(c)}
-        <div class="social">${I.personnes}<span>${esc(personnes(c.nb_clients || 0))}</span></div>
-        <div class="jauge-ligne"><div class="jauge"><div class="jauge-barre" style="width:${p}%"></div></div><b>${p}%</b></div>
+        ${window.IA.delaiCampagne(c, true)}
         <a class="btn btn-large btn-reserver" href="#/campagne/${c.id}">${I.panier}Réserver ma part</a>
       </div></article>`;
   }
@@ -390,9 +388,8 @@
             <div class="encart-total"><span>Vous économisez</span><b>${fcfa(c.prix_reference - c.prix_unitaire)} (-${remiseDe(c)} %)</b></div>
             <p>En échange : un peu de patience. Nous achetons en gros directement en Chine${c.mode_transport === 'maritime' ? ' et expédions par bateau' : ''}, c'est ce qui fait baisser le prix.</p>
           </div>` : ''}
-          <p class="social-detail">${esc(personnes(c.nb_clients || 0))}</p>
           ${c.type_prix === 'HT' && c.frais_transport_unitaire ? `<p class="discret">Transport à régler à l'arrivée : environ ${fcfa(c.frais_transport_unitaire)} par unité.</p>` : ''}
-          <div id="zone-jauge" style="margin:12px 0">${jauge(c.quantite_payee, c.quota)}</div>
+          <div id="zone-jauge" style="margin:12px 0">${window.IA.delaiCampagne(c)}</div>
           <dl class="cle-valeur">
             <dt>Transport</dt><dd>${esc(lib(c.mode_transport))} ${c.mode_transport === 'aerien' ? '(environ 3 semaines après la clôture)' : '(environ 45 à 60 jours après la clôture)'}</dd>
             <dt>Clôture</dt><dd>${date(c.date_cloture, true)} · ${esc(joursRestants(c.date_cloture))}</dd>
@@ -442,7 +439,7 @@
     // Jauge en temps réel
     etat.canal = sb.channel('campagne-' + id)
       .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'campagnes', filter: 'id=eq.' + id },
-        (p) => { const z = document.getElementById('zone-jauge'); if (z) z.innerHTML = jauge(p.new.quantite_payee, p.new.quota); })
+        (p) => { const z = document.getElementById('zone-jauge'); if (z && p.new.date_cloture) z.innerHTML = window.IA.delaiCampagne({ ...c, ...p.new }); })
       .subscribe();
   }
 
@@ -722,7 +719,7 @@
           <dt>Transport</dt><dd>${esc(lib(c.mode_transport))}</dd>
           ${point ? `<dt>Retrait</dt><dd>${esc(point.nom)}</dd>` : ''}
         </dl>
-        <div style="margin-top:12px">${jauge(c.quantite_payee, c.quota)}</div>
+        ${c.statut === 'ouverte' ? `<div style="margin-top:12px">${window.IA.delaiCampagne(c)}</div>` : ''}
       </div>
       ${colisHtml || reception}
       ${docsHtml || ''}
