@@ -401,7 +401,7 @@ window.IP_AC = function (ctx) {
         <div class="carte" style="padding:0;overflow:hidden">
           ${c.image_url ? `<img src="${esc(urlImageCampagne(c.image_url))}" alt="" style="width:100%;aspect-ratio:4/3;object-fit:cover">` : ''}
           <div style="padding:16px"><h2>${esc(c.titre)}</h2>
-            <div class="prix">${fcfa(c.prix_unitaire)} <small class="discret">par unité, ${c.type_prix === 'TTC' ? 'tout compris' : 'hors transport'}</small></div>
+            <div class="prix">${fcfa(c.prix_unitaire)} <small class="discret">par unité, ${c.type_prix === 'TTC' ? 'hors taxes, transport inclus' : 'hors transport et hors taxes'}</small></div>
             <p class="discret">${esc(lib(c.mode_transport))} · clôture le ${date(c.date_cloture, true)}</p></div>
         </div>
       </div><div class="colonne">

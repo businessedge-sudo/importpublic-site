@@ -187,7 +187,7 @@
   // ------------------------------------------------------------------
   async function vueAccueil() {
     const { data, error } = await sb.from('campagnes')
-      .select('id,titre,prix_unitaire,prix_reference,type_prix,date_cloture,ouverte_le,created_at,mode_transport,statut,image_url')
+      .select('id,titre,prix_unitaire,prix_reference,frais_douane_unitaire,type_prix,date_cloture,ouverte_le,created_at,mode_transport,statut,image_url')
       .neq('statut', 'brouillon').order('date_cloture', { ascending: true }).limit(60);
     if (error) throw error;
 
@@ -381,13 +381,21 @@
           <div style="display:flex;justify-content:space-between;gap:10px;align-items:flex-start">
             <h1>${esc(c.titre)}</h1>${badge(ouverte ? 'ouverte' : c.statut)}
           </div>
-          <div class="prix">${fcfa(c.prix_unitaire)}${c.prix_reference > c.prix_unitaire ? ` <s class="prix-barre">${fcfa(c.prix_reference)}</s>` : ''} <small class="discret">par unité, ${c.type_prix === 'TTC' ? 'livré, tout compris' : 'hors transport'}</small></div>
-          ${c.prix_reference > c.prix_unitaire ? `<div class="encart-economie">
-            <div><span>Prix constaté à Lomé</span><b>${fcfa(c.prix_reference)}</b></div>
-            <div><span>Prix Import Public</span><b>${fcfa(c.prix_unitaire)}</b></div>
-            <div class="encart-total"><span>Vous économisez</span><b>${fcfa(c.prix_reference - c.prix_unitaire)} (-${remiseDe(c)} %)</b></div>
-            <p>En échange : un peu de patience. Nous achetons en gros directement en Chine${c.mode_transport === 'maritime' ? ' et expédions par bateau' : ''}, c'est ce qui fait baisser le prix.</p>
-          </div>` : ''}
+          <div class="prix">${fcfa(c.prix_unitaire)}${c.prix_reference > c.prix_unitaire + (Number(c.frais_douane_unitaire) || 0) ? ` <s class="prix-barre">${fcfa(c.prix_reference)}</s>` : ''} <small class="discret">par unité, ${c.type_prix === 'TTC' ? 'hors taxes, transport jusqu\'à Lomé inclus' : 'hors transport et hors taxes'}</small></div>
+          ${(() => {
+            // Comparaison honnête : notre prix + la douane connue, face au prix en boutique à Lomé
+            const douane = Number(c.frais_douane_unitaire) || 0;
+            const cout = Number(c.prix_unitaire) + douane;
+            const eco = Number(c.prix_reference) - cout;
+            if (!(eco > 0) || eco / c.prix_reference < 0.05) return '';
+            return `<div class="encart-economie">
+              <div><span>Prix constaté à Lomé</span><b>${fcfa(c.prix_reference)}</b></div>
+              <div><span>Prix Import Public</span><b>${fcfa(c.prix_unitaire)}</b></div>
+              ${douane ? `<div><span>Frais de douane (à l'arrivée)</span><b>+ ${fcfa(douane)}</b></div>` : ''}
+              <div class="encart-total"><span>Vous économisez</span><b>${fcfa(eco)} (-${Math.round((100 * eco) / c.prix_reference)} %)</b></div>
+              <p>En échange : un peu de patience. Nous achetons en gros directement en Chine${c.mode_transport === 'maritime' ? ' et expédions par bateau' : ''}, c'est ce qui fait baisser le prix.${douane ? '' : ' Frais de douane et livraison communiqués à l\'arrivée du colis.'}</p>
+            </div>`;
+          })()}
           ${c.type_prix === 'HT' && c.frais_transport_unitaire ? `<p class="discret">Transport à régler à l'arrivée : environ ${fcfa(c.frais_transport_unitaire)} par unité.</p>` : ''}
           <div id="zone-jauge" style="margin:12px 0">${window.IA.delaiCampagne(c)}</div>
           <dl class="cle-valeur">
@@ -458,7 +466,8 @@
       ${points.length > 1 ? `<label for="point">Point de retrait</label>
         <select id="point">${points.map((p) => `<option value="${p.id}">${esc(p.nom)}${p.ville ? ' · ' + esc(p.ville) : ''}</option>`).join('')}</select>`
         : points.length === 1 ? `<p class="aide" style="margin-top:10px">Retrait : <b>${esc(points[0].nom)}</b></p>` : ''}
-      <div class="total"><span>Total à payer</span><b id="total">${fcfa(c.prix_unitaire)}</b></div>`;
+      <div class="total"><span>Total à payer</span><b id="total">${fcfa(c.prix_unitaire)}</b></div>
+      <p class="aide" style="margin:2px 0 0">Hors taxes. ${c.frais_douane_unitaire ? `Frais de douane : ${fcfa(c.frais_douane_unitaire)} par unité, à régler au retrait.` : 'Frais de douane communiqués à l\'arrivée du colis.'} Livraison à domicile possible, selon votre quartier.</p>`;
   }
   function brancherChamps(zone, c) {
     const qte = zone.querySelector('#qte');
@@ -938,7 +947,7 @@
     vue.innerHTML = `
       <section class="intro">
         <h1>Commande sur mesure</h1>
-        <p>Décrivez le produit que vous voulez. Nous le trouvons en Chine et vous envoyons un prix livré à Lomé.</p>
+        <p>Décrivez le produit que vous voulez. Nous le trouvons en Chine et vous envoyons un prix, transport jusqu'à Lomé inclus.</p>
       </section>
       <div class="deux-colonnes"><div class="colonne">
       ${etat.session ? '' : `<div class="alerte alerte-info">Vous devrez vous connecter pour envoyer la demande, afin de recevoir le devis et suivre votre colis.</div>`}
@@ -966,7 +975,7 @@
         <div class="carte"><h2>Comment ça marche</h2>
           <ol class="etapes-paiement">
             <li><b>Vous décrivez le produit</b>, avec une photo ou un lien.</li>
-            <li><b>Nous trouvons le fournisseur</b> et vous envoyons un prix livré à Lomé, en général sous 48 h.</li>
+            <li><b>Nous trouvons le fournisseur</b> et vous envoyons un prix, transport jusqu'à Lomé inclus, en général sous 48 h. Les frais de douane et de livraison vous sont communiqués à l'arrivée.</li>
             <li><b>Vous acceptez et payez</b> par T-Money ou Flooz.</li>
             <li><b>Vous suivez votre colis</b> ici, jusqu'au retrait.</li>
           </ol></div>
@@ -1042,7 +1051,8 @@
         <a class="btn btn-second" href="#/messages">${window.ICO.bulle}Ajouter une précision</a>`;
     } else if (d.statut === 'devis_envoye') {
       action = `<h2>Notre proposition</h2>
-        <div class="total" style="border:0;margin:0"><span>Prix total livré à Lomé</span><b>${fcfa(d.montant_devis)}</b></div>
+        <div class="total" style="border:0;margin:0"><span>Prix total hors taxes</span><b>${fcfa(d.montant_devis)}</b></div>
+        <p class="aide" style="margin:4px 0 0">Frais de douane et de livraison communiqués à l'arrivée du colis à Lomé.</p>
         ${d.note_devis ? `<p style="white-space:pre-line">${esc(d.note_devis)}</p>` : ''}
         <div class="boutons"><button class="btn btn-ok" id="accepter">Accepter et payer</button><button class="btn btn-ko" id="refuser">Refuser</button></div>
         <p class="aide-commande">Une question avant d'accepter ? <a href="#/messages">Écrivez-nous</a>.</p>`;
