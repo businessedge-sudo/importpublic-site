@@ -577,14 +577,21 @@
   // Bloc de paiement par numéro marchand
   // ------------------------------------------------------------------
   // Message WhatsApp prêt à envoyer : montant + référence client déjà écrits
-  const texteWaPaiement = (montant) => 'Bonjour, je souhaite payer ma commande de ' + fcfa(montant) + '.\n'
+  const texteWaPaiement = (montant) => 'Bonjour, je souhaite payer ma commande de ' + fcfa(montant) + ' :\n'
+    + (etat.detailsPaiement ? etat.detailsPaiement + '\n' : '')
     + (etat.profil && etat.profil.reference ? 'Référence client : ' + etat.profil.reference + '\n' : '') + 'Pouvez-vous m\'aider ?';
   const aideWaPaiement = (montant) => {
     const g = etat.groupeur || {};
     return g.whatsapp ? `<p class="aide-paiement-wa">Vous ne vous en sortez pas ? <a target="_blank" rel="noopener" href="${waLien(g.whatsapp, texteWaPaiement(montant))}">Écrivez-nous sur WhatsApp</a>, votre message est déjà prêt et nous vous guidons.</p>` : '';
   };
 
-  function blocPaiement({ commandeId, demandeId, montant, enVerification, enLigne, apres }) {
+  // Détails lisibles pour le message WhatsApp : produit, quantité, options choisies
+  const detailsArticle = (nom, quantite, variante) => [String(nom || '').slice(0, 80),
+    'Quantité : ' + quantite + ' pièce' + (quantite > 1 ? 's' : ''),
+    ...Object.entries(variante && typeof variante === 'object' ? variante : {}).map(([k, v]) => k + ' : ' + v)].join('\n');
+
+  function blocPaiement({ commandeId, demandeId, montant, enVerification, enLigne, apres, details }) {
+    etat.detailsPaiement = details || '';
     if (enVerification) {
       return `<div class="alerte alerte-alerte"><b>Paiement en cours de vérification.</b><br>
         Référence ${esc(enVerification.reference_externe)} · ${esc(lib(enVerification.operateur))}. Nous validons sous 24 h maximum.</div>`;
@@ -815,7 +822,7 @@
           <button class="btn btn-ko" id="refuser-cmd">Ce n'est pas ma commande</button></div>`;
     } else if (o.statut === 'en_attente_paiement') {
       corps = (rejete && !enVerif ? `<div class="alerte alerte-ko">Le paiement avec la référence ${esc(rejete.reference_externe)} n'a pas été retrouvé. Vérifiez la référence ou contactez-nous.</div>` : '')
-        + blocPaiement({ commandeId: o.id, montant: o.montant_total, enVerification: enVerif, enLigne, apres: router });
+        + blocPaiement({ commandeId: o.id, montant: o.montant_total, enVerification: enVerif, enLigne, apres: router, details: detailsArticle(c && c.titre, o.quantite, o.variante) });
     } else if (o.statut === 'a_rembourser') {
       corps = `<div class="alerte alerte-ko">La campagne n'a pas atteint son quota. Vous allez être remboursé de ${fcfa(o.montant_total)}.</div>`;
     } else if (o.statut === 'remboursee') {
@@ -1041,7 +1048,7 @@
         <p class="aide-commande">Une question avant d'accepter ? <a href="#/messages">Écrivez-nous</a>.</p>`;
     } else if (d.statut === 'acceptee') {
       action = (rejete && !enVerif ? `<div class="alerte alerte-ko">Le paiement avec la référence ${esc(rejete.reference_externe)} n'a pas été retrouvé.</div>` : '')
-        + blocPaiement({ demandeId: d.id, montant: d.montant_devis, enVerification: enVerif, enLigne, apres: router });
+        + blocPaiement({ demandeId: d.id, montant: d.montant_devis, enVerification: enVerif, enLigne, apres: router, details: detailsArticle(d.description, d.quantite) });
     } else if (d.statut === 'arrivee' && colisHtml) {
       action = '';
     } else if (d.statut === 'arrivee') {
