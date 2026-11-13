@@ -576,6 +576,14 @@
   // ------------------------------------------------------------------
   // Bloc de paiement par numéro marchand
   // ------------------------------------------------------------------
+  // Message WhatsApp prêt à envoyer : montant + référence client déjà écrits
+  const texteWaPaiement = (montant) => 'Bonjour, je souhaite payer ma commande de ' + fcfa(montant) + '.\n'
+    + (etat.profil && etat.profil.reference ? 'Référence client : ' + etat.profil.reference + '\n' : '') + 'Pouvez-vous m\'aider ?';
+  const aideWaPaiement = (montant) => {
+    const g = etat.groupeur || {};
+    return g.whatsapp ? `<p class="aide-paiement-wa">Vous ne vous en sortez pas ? <a target="_blank" rel="noopener" href="${waLien(g.whatsapp, texteWaPaiement(montant))}">Écrivez-nous sur WhatsApp</a>, votre message est déjà prêt et nous vous guidons.</p>` : '';
+  };
+
   function blocPaiement({ commandeId, demandeId, montant, enVerification, enLigne, apres }) {
     if (enVerification) {
       return `<div class="alerte alerte-alerte"><b>Paiement en cours de vérification.</b><br>
@@ -587,7 +595,7 @@
     if (!numeros.length) {
       return `<div class="paiement"><b>Paiement</b><p style="margin-top:6px">Le numéro marchand sera affiché ici très bientôt.
         En attendant, écrivez-nous pour payer.</p>
-        ${g.whatsapp ? `<a class="btn btn-wa btn-large" target="_blank" rel="noopener" href="${waLien(g.whatsapp, 'Bonjour, je souhaite payer ma commande de ' + fcfa(montant))}">Payer via WhatsApp</a>` : ''}</div>`;
+        ${g.whatsapp ? `<a class="btn btn-wa btn-large" target="_blank" rel="noopener" href="${waLien(g.whatsapp, texteWaPaiement(montant))}">Payer via WhatsApp</a>` : ''}</div>`;
     }
     setTimeout(() => brancherPaiement({ commandeId, demandeId, apres }), 0);
     return `<div class="paiement" id="bloc-paiement">
@@ -606,7 +614,7 @@
         <label for="num">Numéro qui a payé</label>
         <input id="num" type="tel" inputmode="tel" placeholder="90 00 00 00" value="${esc(etat.profil && etat.profil.telephone || '')}">
         <button class="btn btn-large" style="margin-top:14px">J'ai payé, envoyer la référence</button>
-      </form></div>`;
+      </form>${aideWaPaiement(montant)}</div>`;
   }
 
   // ------------------------------------------------------------------
@@ -661,6 +669,7 @@
       ${attente}
       ${numeros.length ? `<details class="pg-manuel"><summary>Vous préférez payer au numéro marchand ?</summary>
         ${blocPaiementManuel({ commandeId, demandeId, montant, numeros, apres })}</details>` : ''}
+      ${aideWaPaiement(montant)}
     </div>`;
   }
 
