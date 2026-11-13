@@ -1337,6 +1337,11 @@
              <div><b>Espace Ambassadeur Commercial</b><span>${etat.ac.statut === 'actif' ? 'Votre lien, vos clients, vos commissions' : 'Statut suspendu'}</span></div>${I.fleche}</a>`
         : `<a class="carte carte-ac" href="#/ambassadeur"><span class="carte-ac-ico">${I.personnes}</span>
              <div><b>Devenir Ambassadeur Commercial</b><span>Facultatif · Faites connaître Import Public, aidez vos proches et gagnez des commissions</span></div>${I.fleche}</a>`;
+      // Membres de l'équipe : accès direct à l'espace équipe (application séparée, installable sur le téléphone)
+      const carteEquipe = ['admin', 'assistant', 'groupeur', 'representant', 'partenaire'].includes(p.role)
+        ? `<a class="carte carte-ac carte-equipe" href="${esc(cfg.urlEquipe)}/" target="_blank" rel="noopener"><span class="carte-ac-ico">${I.engrenage}</span>
+             <div><b>Espace équipe</b><span>${p.role === 'admin' ? 'Administration' : p.role === 'assistant' ? 'Assistant' : 'Point de retrait'} · ouvrez-le puis « Ajouter à l'écran d'accueil » pour l'avoir en application</span></div>${I.fleche}</a>`
+        : '';
       vue.innerHTML = `
         <h1>Mon compte</h1>
         ${!p.telephone ? `<div class="alerte alerte-alerte"><b>Dernière étape : votre numéro WhatsApp.</b>
@@ -1344,6 +1349,7 @@
         <div class="deux-colonnes"><div class="colonne">
         <div class="carte reference-client"><span>Votre référence client</span><b>${esc(p.reference || '-')}</b>
           <small>Communiquez-la à un ambassadeur ou à notre équipe pour être retrouvé rapidement.</small></div>
+        ${carteEquipe}
         ${carteAC}
         <div data-zone-notifs id="zone-alertes"></div>
         </div><div class="colonne">
