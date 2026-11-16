@@ -383,6 +383,7 @@
             <h1>${esc(c.titre)}</h1>${badge(ouverte ? 'ouverte' : c.statut)}
           </div>
           ${c.accroche ? `<p class="accroche">${esc(c.accroche)}</p>` : ''}
+          ${ouverte ? `<button type="button" class="btn btn-second btn-petit btn-partage" id="partager-campagne">${window.ICO.message}Partager à un proche</button>` : ''}
           <div class="prix">${fcfa(c.prix_unitaire)}${c.prix_reference > c.prix_unitaire + (Number(c.frais_douane_unitaire) || 0) ? ` <s class="prix-barre">${fcfa(c.prix_reference)}</s>` : ''} <small class="discret">par unité, ${c.type_prix === 'TTC' ? 'hors taxes, transport jusqu\'à Lomé inclus' : 'hors transport et hors taxes'}</small></div>
           ${(() => {
             // Comparaison honnête : notre prix + la douane connue, face au prix en boutique à Lomé
@@ -410,6 +411,8 @@
       </div>
       </div>`;
     brancherGalerie();
+    const bPartC = document.getElementById('partager-campagne');
+    if (bPartC) bPartC.addEventListener('click', () => window.IA.partagerCampagne(c, etat.ac && etat.ac.statut === 'actif' ? etat.ac.code : null));
 
     const zone = document.getElementById('zone-commande');
     const listeDeja = deja.length ? `<div class="carte"><h2>Vos réservations</h2>${deja.map((o) => `

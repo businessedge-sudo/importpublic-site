@@ -265,7 +265,7 @@ window.IP_AC = function (ctx) {
     const url = lienParrainage(code);
     const [{ data: t }, { data: camps }] = await Promise.all([
       sb.rpc('tableau_ac', { p_debut: '2020-01-01', p_fin: new Date().toISOString().slice(0, 10) }),
-      sb.from('campagnes').select('id,titre,prix_unitaire,image_url,date_cloture').eq('statut', 'ouverte')
+      sb.from('campagnes').select('id,titre,prix_unitaire,prix_reference,frais_douane_unitaire,accroche,image_url,date_cloture').eq('statut', 'ouverte')
         .gt('date_cloture', new Date().toISOString()).order('date_cloture').limit(20)
     ]);
     const message = 'Achetons en Chine, ensemble ! Commandes groupées livrées à Lomé, paiement T-Money ou Flooz. Inscrivez-vous ici :';
@@ -299,7 +299,7 @@ window.IP_AC = function (ctx) {
     document.getElementById('copier-lien').addEventListener('click', () => copier(url));
     document.getElementById('partager-lien').addEventListener('click', () => partager(message, url));
     vue.querySelectorAll('[data-partager-camp]').forEach((b) => b.addEventListener('click', () =>
-      partager(`${b.dataset.titre} à ${fcfa(b.dataset.prix)}, en commande groupée sur Import Public :`, lienCampagne(code, b.dataset.partagerCamp))));
+      window.IA.partagerCampagne(camps.find((x) => x.id === b.dataset.partagerCamp), code)));
   }
 
   // ---------- Mes clients (suivi, pas propriété) ----------
