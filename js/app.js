@@ -602,11 +602,16 @@
     ...Object.entries(variante && typeof variante === 'object' ? variante : {}).map(([k, v]) => k + ' : ' + v)].join('\n');
 
   // Lien de paiement propre au produit (campagne) ou au devis : bouton en tête du bloc de paiement
+  // Lien fixe s'il correspond au montant (1 pièce), sinon lien « montant au choix » où le client saisit le montant
   function blocPaiement(o) {
     const corps = blocPaiementBase(o);
-    if (!o.lienPaiement || o.enVerification) return corps;
+    if (o.enVerification) return corps;
+    const fixe = o.lienPaiement && (o.quantite || 1) === 1;
+    const lien = fixe ? o.lienPaiement : (etat.groupeur && etat.groupeur.lien_paiement_libre);
+    if (!lien) return corps;
     return `<div class="paiement-lien">
-        <a class="btn btn-large btn-ok" href="${esc(o.lienPaiement)}" target="_blank" rel="noopener">💳 Payer ${fcfa(o.montant)} en ligne</a>
+        <a class="btn btn-large btn-ok" href="${esc(lien)}" target="_blank" rel="noopener">💳 Payer ${fcfa(o.montant)} en ligne</a>
+        ${fixe ? '' : `<p class="alerte alerte-alerte" style="margin:8px 0 0">Sur la page de paiement, saisissez le montant exact : <b>${fcfa(o.montant)}</b>.</p>`}
         <p class="aide">La page de paiement s'ouvre dans un nouvel onglet. Une fois payé, revenez ici et envoyez-nous la référence de la transaction ci-dessous pour que nous validions votre commande.</p>
       </div>${corps}`;
   }
@@ -843,7 +848,7 @@
           <button class="btn btn-ko" id="refuser-cmd">Ce n'est pas ma commande</button></div>`;
     } else if (o.statut === 'en_attente_paiement') {
       corps = (rejete && !enVerif ? `<div class="alerte alerte-ko">Le paiement avec la référence ${esc(rejete.reference_externe)} n'a pas été retrouvé. Vérifiez la référence ou contactez-nous.</div>` : '')
-        + blocPaiement({ commandeId: o.id, montant: o.montant_total, enVerification: enVerif, enLigne, apres: router, details: detailsArticle(c && c.titre, o.quantite, o.variante), lienPaiement: c && c.lien_paiement });
+        + blocPaiement({ commandeId: o.id, montant: o.montant_total, enVerification: enVerif, enLigne, apres: router, details: detailsArticle(c && c.titre, o.quantite, o.variante), lienPaiement: c && c.lien_paiement, quantite: o.quantite });
     } else if (o.statut === 'a_rembourser') {
       corps = `<div class="alerte alerte-ko">La campagne n'a pas atteint son quota. Vous allez être remboursé de ${fcfa(o.montant_total)}.</div>`;
     } else if (o.statut === 'remboursee') {
