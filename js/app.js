@@ -187,7 +187,7 @@
   // ------------------------------------------------------------------
   async function vueAccueil() {
     const { data, error } = await sb.from('campagnes')
-      .select('id,titre,prix_unitaire,prix_reference,frais_douane_unitaire,type_prix,date_cloture,ouverte_le,created_at,mode_transport,statut,image_url')
+      .select('id,titre,prix_unitaire,prix_reference,frais_douane_unitaire,type_prix,date_cloture,ouverte_le,created_at,mode_transport,statut,image_url,accroche')
       .neq('statut', 'brouillon').order('date_cloture', { ascending: true }).limit(60);
     if (error) throw error;
 
@@ -342,6 +342,7 @@
 </a>
       <div class="campagne-corps">
         <a class="campagne-titre" href="#/campagne/${c.id}">${esc(c.titre)}</a>
+        ${c.accroche ? `<p class="accroche petite">${esc(c.accroche)}</p>` : ''}
         ${window.IA.blocPrix(c)}
         ${window.IA.delaiCampagne(c, true)}
         <a class="btn btn-large btn-reserver" href="#/campagne/${c.id}">${I.panier}Réserver ma part</a>
@@ -381,6 +382,7 @@
           <div style="display:flex;justify-content:space-between;gap:10px;align-items:flex-start">
             <h1>${esc(c.titre)}</h1>${badge(ouverte ? 'ouverte' : c.statut)}
           </div>
+          ${c.accroche ? `<p class="accroche">${esc(c.accroche)}</p>` : ''}
           <div class="prix">${fcfa(c.prix_unitaire)}${c.prix_reference > c.prix_unitaire + (Number(c.frais_douane_unitaire) || 0) ? ` <s class="prix-barre">${fcfa(c.prix_reference)}</s>` : ''} <small class="discret">par unité, ${c.type_prix === 'TTC' ? 'hors taxes, transport jusqu\'à Lomé inclus' : 'hors transport et hors taxes'}</small></div>
           ${(() => {
             // Comparaison honnête : notre prix + la douane connue, face au prix en boutique à Lomé
@@ -599,7 +601,17 @@
     'Quantité : ' + quantite + ' pièce' + (quantite > 1 ? 's' : ''),
     ...Object.entries(variante && typeof variante === 'object' ? variante : {}).map(([k, v]) => k + ' : ' + v)].join('\n');
 
-  function blocPaiement({ commandeId, demandeId, montant, enVerification, enLigne, apres, details }) {
+  // Lien de paiement propre au produit (campagne) ou au devis : bouton en tête du bloc de paiement
+  function blocPaiement(o) {
+    const corps = blocPaiementBase(o);
+    if (!o.lienPaiement || o.enVerification) return corps;
+    return `<div class="paiement-lien">
+        <a class="btn btn-large btn-ok" href="${esc(o.lienPaiement)}" target="_blank" rel="noopener">💳 Payer ${fcfa(o.montant)} en ligne</a>
+        <p class="aide">La page de paiement s'ouvre dans un nouvel onglet. Une fois payé, revenez ici et envoyez-nous la référence de la transaction ci-dessous pour que nous validions votre commande.</p>
+      </div>${corps}`;
+  }
+
+  function blocPaiementBase({ commandeId, demandeId, montant, enVerification, enLigne, apres, details }) {
     etat.detailsPaiement = details || '';
     if (enVerification) {
       return `<div class="alerte alerte-alerte"><b>Paiement en cours de vérification.</b><br>
@@ -831,7 +843,7 @@
           <button class="btn btn-ko" id="refuser-cmd">Ce n'est pas ma commande</button></div>`;
     } else if (o.statut === 'en_attente_paiement') {
       corps = (rejete && !enVerif ? `<div class="alerte alerte-ko">Le paiement avec la référence ${esc(rejete.reference_externe)} n'a pas été retrouvé. Vérifiez la référence ou contactez-nous.</div>` : '')
-        + blocPaiement({ commandeId: o.id, montant: o.montant_total, enVerification: enVerif, enLigne, apres: router, details: detailsArticle(c && c.titre, o.quantite, o.variante) });
+        + blocPaiement({ commandeId: o.id, montant: o.montant_total, enVerification: enVerif, enLigne, apres: router, details: detailsArticle(c && c.titre, o.quantite, o.variante), lienPaiement: c && c.lien_paiement });
     } else if (o.statut === 'a_rembourser') {
       corps = `<div class="alerte alerte-ko">La campagne n'a pas atteint son quota. Vous allez être remboursé de ${fcfa(o.montant_total)}.</div>`;
     } else if (o.statut === 'remboursee') {
@@ -1058,7 +1070,7 @@
         <p class="aide-commande">Une question avant d'accepter ? <a href="#/messages">Écrivez-nous</a>.</p>`;
     } else if (d.statut === 'acceptee') {
       action = (rejete && !enVerif ? `<div class="alerte alerte-ko">Le paiement avec la référence ${esc(rejete.reference_externe)} n'a pas été retrouvé.</div>` : '')
-        + blocPaiement({ demandeId: d.id, montant: d.montant_devis, enVerification: enVerif, enLigne, apres: router, details: detailsArticle(d.description, d.quantite) });
+        + blocPaiement({ demandeId: d.id, montant: d.montant_devis, enVerification: enVerif, enLigne, apres: router, details: detailsArticle(d.description, d.quantite), lienPaiement: d.lien_paiement });
     } else if (d.statut === 'arrivee' && colisHtml) {
       action = '';
     } else if (d.statut === 'arrivee') {
