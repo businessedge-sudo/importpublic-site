@@ -604,16 +604,27 @@
   // Lien de paiement propre au produit (campagne) ou au devis : bouton en tête du bloc de paiement
   // Lien fixe s'il correspond au montant (1 pièce), sinon lien « montant au choix » où le client saisit le montant
   function blocPaiement(o) {
-    const corps = blocPaiementBase(o);
-    if (o.enVerification) return corps;
-    const fixe = o.lienPaiement && (o.quantite || 1) === 1;
-    const lien = fixe ? o.lienPaiement : (etat.groupeur && etat.groupeur.lien_paiement_libre);
-    if (!lien) return corps;
-    return `<div class="paiement-lien">
-        <a class="btn btn-large btn-ok" href="${esc(lien)}" target="_blank" rel="noopener">💳 Payer ${fcfa(o.montant)} en ligne</a>
-        ${fixe ? '' : `<p class="alerte alerte-alerte" style="margin:8px 0 0">Sur la page de paiement, saisissez le montant exact : <b>${fcfa(o.montant)}</b>.</p>`}
-        <p class="aide">La page de paiement s'ouvre dans un nouvel onglet. Une fois payé, revenez ici et envoyez-nous la référence de la transaction ci-dessous pour que nous validions votre commande.</p>
-      </div>${corps}`;
+    if (o.enVerification) return blocPaiementBase(o);
+    const g = etat.groupeur || {};
+    if (g.paiement_en_ligne) return blocPaiementBase(o);
+    // Lien de paiement fixe : une pièce d'une campagne, ou devis avec son propre lien
+    const lien = o.lienPaiement && (o.quantite || 1) === 1 ? o.lienPaiement : null;
+    if (lien) {
+      return `<div class="paiement-lien">
+          <a class="btn btn-large btn-ok" href="${esc(lien)}" target="_blank" rel="noopener">💳 Payer ${fcfa(o.montant)} en ligne</a>
+          <p class="aide">La page de paiement s'ouvre dans un nouvel onglet. Une fois payé, revenez ici et envoyez-nous la référence de la transaction ci-dessous pour que nous validions votre commande.</p>
+        </div>${blocPaiementBase(o)}`;
+    }
+    // Plusieurs pièces ou sur mesure : paiement accompagné sur WhatsApp
+    const numeros = [g.numero_marchand_tmoney, g.numero_marchand_flooz].filter(Boolean);
+    if (!numeros.length && g.whatsapp) {
+      etat.detailsPaiement = o.details || '';
+      return `<div class="paiement"><h2>Payer ${fcfa(o.montant)}</h2>
+        <p style="margin-top:6px">Écrivez-nous sur WhatsApp : nous vous accompagnons pour le paiement par Mobile Money. Votre message est déjà prêt, avec votre commande et votre référence client.</p>
+        <a class="btn btn-wa btn-large" target="_blank" rel="noopener" href="${waLien(g.whatsapp, texteWaPaiement(o.montant))}">Payer via WhatsApp</a>
+        <p class="aide">Dès que votre paiement est reçu, nous le validons et vous recevez votre reçu ici.</p></div>`;
+    }
+    return blocPaiementBase(o);
   }
 
   function blocPaiementBase({ commandeId, demandeId, montant, enVerification, enLigne, apres, details }) {
@@ -626,9 +637,20 @@
     if (g.paiement_en_ligne) return blocPaiementEnLigne({ commandeId, demandeId, montant, enLigne, apres });
     const numeros = [['tmoney', g.numero_marchand_tmoney], ['flooz', g.numero_marchand_flooz]].filter(([, n]) => n);
     if (!numeros.length) {
-      return `<div class="paiement"><b>Paiement</b><p style="margin-top:6px">Le numéro marchand sera affiché ici très bientôt.
-        En attendant, écrivez-nous pour payer.</p>
-        ${g.whatsapp ? `<a class="btn btn-wa btn-large" target="_blank" rel="noopener" href="${waLien(g.whatsapp, texteWaPaiement(montant))}">Payer via WhatsApp</a>` : ''}</div>`;
+      // Paiement par lien (Monniz…) : le bouton « Payer en ligne » est affiché au-dessus ; ici, le client nous envoie sa référence
+      setTimeout(() => brancherPaiement({ commandeId, demandeId, apres }), 0);
+      return `<div class="paiement" id="bloc-paiement">
+        <h2>Déjà payé ?</h2>
+        <p class="aide" style="margin-top:0">Envoyez-nous la référence reçue par SMS ou sur la page de paiement : nous validons votre commande et vous recevez votre reçu.</p>
+        <form id="form-paiement">
+          <label for="op">Payé avec</label>
+          <select id="op" required><option value="monniz">Lien de paiement Import Public</option><option value="flooz">Flooz (Moov Money)</option><option value="tmoney">T-Money</option></select>
+          <label for="ref">Référence de la transaction</label>
+          <input id="ref" required minlength="4" autocomplete="off" placeholder="Ex. : MP251116.1234.A56789">
+          <label for="num">Numéro qui a payé</label>
+          <input id="num" type="tel" inputmode="tel" placeholder="90 00 00 00" value="${esc(etat.profil && etat.profil.telephone || '')}">
+          <button class="btn btn-large" style="margin-top:14px">J'ai payé, envoyer la référence</button>
+        </form>${aideWaPaiement(montant)}</div>`;
     }
     setTimeout(() => brancherPaiement({ commandeId, demandeId, apres }), 0);
     return `<div class="paiement" id="bloc-paiement">
@@ -842,7 +864,7 @@
       corps = `<h2>Commande préparée pour vous</h2>
         <p>Un Ambassadeur Commercial d'Import Public a préparé cette commande avec vous le ${date(o.created_at, true)}.
         Vérifiez le produit, la quantité et le montant ci-dessus.</p>
-        <p class="aide">Rien n'est payé tant que vous ne confirmez pas. Vous paierez ensuite vous-même, au numéro marchand d'Import Public.
+        <p class="aide">Rien n'est payé tant que vous ne confirmez pas. Vous paierez ensuite vous-même, en ligne, depuis votre commande.
         Ne remettez jamais d'argent à un ambassadeur.</p>
         <div class="boutons"><button class="btn btn-ok" id="confirmer-cmd">${window.ICO.coche}Je confirme cette commande</button>
           <button class="btn btn-ko" id="refuser-cmd">Ce n'est pas ma commande</button></div>`;
