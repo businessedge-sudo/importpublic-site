@@ -154,7 +154,7 @@
     const params = new URLSearchParams(qs || '');
     const onglet = { '': 'campagnes', campagne: 'campagnes', 'sur-mesure': 'sur-mesure', demande: 'colis',
                      commande: 'colis', colis: 'colis', compte: 'compte', reinitialiser: 'compte',
-                     ambassadeur: 'compte', ac: 'compte', messages: 'messages', document: 'messages', avis: 'colis' }[morceaux[0] || ''];
+                     ambassadeur: 'compte', ac: 'compte', messages: 'messages', document: 'messages', avis: 'colis', suivi: 'colis' }[morceaux[0] || ''];
     document.querySelectorAll('.nav-bas a, .nav-haut a').forEach((a) => a.classList.toggle('actif', a.dataset.onglet === onglet));
     // Bouton WhatsApp flottant sur toutes les pages (sauf la messagerie, qui a sa propre zone de saisie)
     const avecWa = !!(etat.groupeur && etat.groupeur.whatsapp) && morceaux[0] !== 'messages';
@@ -165,7 +165,7 @@
     const routes = {
       '': vueAccueil, campagne: vueCampagne, commande: vueCommande, 'sur-mesure': vueSurMesure,
       demande: vueDemande, colis: vueColis, compte: vueCompte, reinitialiser: vueReinitialiser, messages: vueMessages,
-      document: vueDocument, avis: vueAvis, ...espaceAC.routes
+      document: vueDocument, avis: vueAvis, suivi: vueSuivi, ...espaceAC.routes
     };
     const f = routes[morceaux[0] || ''] || vueAccueil;
     vue.innerHTML = '<div class="chargement">Chargement…</div>';
@@ -1322,6 +1322,105 @@
   }
 
   // Avis après retrait : note sur 5 + quelques mots
+  // ------------------------------------------------------------------
+  // Suivi sans compte : lien personnel envoyé sur WhatsApp par l'équipe
+  // ------------------------------------------------------------------
+  async function vueSuivi(token, params, morceaux) {
+    const { data: s2, error } = await sb.rpc('suivi_public', { p_token: token });
+    if (error) throw error;
+    if (!s2) {
+      vue.innerHTML = `<div class="carte vide"><p><b>Ce lien de suivi n'est plus valide.</b></p>
+        <p>Demandez-nous un nouveau lien sur WhatsApp.</p></div>`;
+      return;
+    }
+    const g = etat.groupeur || {};
+    const docs = s2.documents || [];
+    // Affichage d'un document (devis, reçu, bon de retrait…)
+    if (morceaux[2] === 'doc') {
+      const doc = docs.find((x) => x.id === morceaux[3]);
+      vue.innerHTML = doc ? `<a class="retour" href="#/suivi/${esc(token)}">← Mon suivi</a>${window.IP_DOCS.html(doc)}
+        <div class="doc-actions"><button class="btn btn-second" id="doc-imprimer">${window.ICO.telecharger}Enregistrer en PDF</button>
+        <a class="btn btn-second" href="#/suivi/${esc(token)}">Retour au suivi</a></div>` : '<div class="carte vide">Document introuvable.</div>';
+      const b = document.getElementById('doc-imprimer'); if (b) b.addEventListener('click', () => window.print());
+      return;
+    }
+    const cl = s2.client || {};
+    const wa = (texte) => g.whatsapp ? waLien(g.whatsapp, texte + '\nRéférence client : ' + (cl.reference || '')) : null;
+    const colisDe = (champ, id) => (s2.colis || []).find((k) => k[champ] === id);
+    const blocColis = (k) => !k ? '' : `<div class="suivi-colis ${k.statut}">
+        <b>📦 Colis ${esc(k.reference)} · ${esc(lib(k.statut))}</b>
+        ${k.code ? `<p>Votre colis vous attend ${k.point ? 'chez <b>' + esc(k.point) + '</b>' : ''}${k.adresse ? ', ' + esc(k.adresse) : ''}${k.horaires ? ' (' + esc(k.horaires) + ')' : ''}.</p>
+          <p class="suivi-code">Code de retrait : <b>${esc(k.code)}</b></p>` : ''}
+        ${k.douane > 0 && k.statut !== 'remis' ? `<p>Frais de douane à régler au retrait : <b>${fcfa(k.douane)}</b></p>` : ''}</div>`;
+    const payer = (montant, lien, texte) => `<div class="suivi-payer">
+        ${lien ? `<a class="btn btn-ok" href="${esc(lien)}" target="_blank" rel="noopener">💳 Payer ${fcfa(montant)} en ligne</a>` : ''}
+        ${wa(texte) ? `<a class="btn btn-wa" href="${wa(texte)}" target="_blank" rel="noopener">${lien ? 'Payer avec notre aide' : 'Payer ' + fcfa(montant) + ' via WhatsApp'}</a>` : ''}
+        ${lien ? '<p class="aide">Après un paiement en ligne, envoyez-nous la référence reçue sur WhatsApp : nous validons et votre reçu apparaît ici.</p>' : ''}</div>`;
+
+    const cartesCommandes = (s2.commandes || []).map((o) => {
+      const v = o.variante && typeof o.variante === 'object' ? Object.entries(o.variante).map(([k, x]) => `${k} : ${x}`).join(', ') : '';
+      const etapes = ['annulee', 'a_rembourser', 'remboursee'].includes(o.statut) ? '' : frise(ETAPES_CAMPAGNE, o.campagne_statut === 'echec_quota' ? '' : o.campagne_statut);
+      return `<div class="carte suivi-carte">
+        <div class="suivi-tete">${o.image ? `<img src="${esc(urlImageCampagne(o.image))}" alt="">` : ''}
+          <div><h2>${esc(o.titre)}</h2><p class="discret">${o.quantite} pièce${o.quantite > 1 ? 's' : ''}${v ? ' · ' + esc(v) : ''} · ${fcfa(o.montant)} hors taxes</p>${badge(o.statut)}</div></div>
+        ${o.statut === 'en_attente_paiement' ? `<p>Pour réserver votre place, réglez <b>${fcfa(o.montant)}</b> avant la clôture du ${esc(date(o.date_cloture)).replace(/\.$/, '')}.</p>
+          ${payer(o.montant, o.lien_paiement, `Bonjour, je souhaite payer ma commande de ${fcfa(o.montant)} : ${o.titre}, ${o.quantite} pièce${o.quantite > 1 ? 's' : ''}${v ? ' (' + v + ')' : ''}.`)}` : ''}
+        ${etapes}
+        ${blocColis(colisDe('commande_id', o.id))}
+      </div>`;
+    }).join('');
+
+    const cartesDemandes = (s2.demandes || []).map((d) => {
+      const devis = docs.find((x) => x.type === 'devis' && x.demande_id === d.id);
+      return `<div class="carte suivi-carte">
+        <h2>Sur mesure : ${esc((d.description || '').slice(0, 80))}</h2>
+        <p class="discret">${d.quantite} pièce${d.quantite > 1 ? 's' : ''}${d.montant ? ' · ' + fcfa(d.montant) + ' hors taxes' : ''}</p>${badge(d.statut)}
+        ${d.statut === 'nouvelle' ? '<p>Nous cherchons votre produit et vous envoyons notre meilleure proposition sous 48 h.</p>' : ''}
+        ${['devis_envoye', 'acceptee'].includes(d.statut) ? `<p>Votre devis est prêt${devis ? ` : <a href="#/suivi/${esc(token)}/doc/${devis.id}">voir le devis ${esc(devis.numero)}</a>` : ''}. Pour l'accepter, payez <b>${fcfa(d.montant)}</b> :</p>
+          ${payer(d.montant, d.lien_paiement, `Bonjour, j'accepte le devis${devis ? ' ' + devis.numero : ''} et je souhaite payer ${fcfa(d.montant)} pour : ${(d.description || '').slice(0, 60)}.`)}` : ''}
+        ${['refusee', 'annulee'].includes(d.statut) ? '' : frise(ETAPES_DEMANDE, d.statut)}
+        ${blocColis(colisDe('demande_id', d.id))}
+      </div>`;
+    }).join('');
+
+    const listeDocs = docs.length ? `<div class="carte"><h2>Mes documents</h2>${docs.map((x) => `<a class="ligne-info" href="#/suivi/${esc(token)}/doc/${x.id}" style="text-decoration:none;color:inherit">
+        <span>${esc(window.IP_DOCS.libelle(x.type))} n° ${esc(x.numero)}</span><span class="discret">${x.total ? fcfa(x.total) + ' · ' : ''}${esc(date(x.cree_le))}</span></a>`).join('')}</div>` : '';
+
+    vue.innerHTML = `
+      <div class="suivi-entete">
+        <h1>Bonjour ${esc(cl.prenom || '')} 👋</h1>
+        <p>Voici le suivi de vos commandes Import Public. Votre référence client : <b>${esc(cl.reference || '')}</b></p>
+        ${wa('') ? `<a class="btn btn-wa btn-petit" href="${wa('Bonjour, j\'ai une question sur ma commande.')}" target="_blank" rel="noopener">Une question ? Écrivez-nous sur WhatsApp</a>` : ''}
+      </div>
+      ${cartesCommandes}${cartesDemandes}
+      ${!cartesCommandes && !cartesDemandes ? '<div class="carte vide">Aucune commande pour le moment.</div>' : ''}
+      ${listeDocs}
+      ${cl.a_un_acces ? `<div class="carte"><p>Vous avez aussi un accès au site : <a href="#/compte">connectez-vous</a> pour voir vos messages et commander directement.</p></div>`
+        : `<details class="carte suivi-acces"><summary><b>Créer mon accès au site (facultatif)</b> · pour commander vous-même et recevoir les notifications</summary>
+          <form id="form-acces">
+            <p class="aide">Tout votre historique sera conservé. Ce lien de suivi continuera de fonctionner.</p>
+            <label for="ac-email">Votre adresse e-mail</label><input id="ac-email" type="email" required autocomplete="email">
+            <label for="ac-mdp">Choisissez un mot de passe</label><input id="ac-mdp" type="password" minlength="8" required autocomplete="new-password">
+            <button class="btn" style="margin-top:12px">Créer mon accès</button>
+          </form></details>`}
+      <p class="discret" style="text-align:center;margin-top:18px">Ce lien est personnel : ne le partagez pas.</p>`;
+    const f = document.getElementById('form-acces');
+    if (f) f.addEventListener('submit', (ev) => {
+      ev.preventDefault();
+      occupe(f.querySelector('button'), async () => {
+        const email = document.getElementById('ac-email').value.trim();
+        const mdp = document.getElementById('ac-mdp').value;
+        const { data, error: e } = await sb.functions.invoke('clients-whatsapp', { body: { action: 'activer', token, email, motdepasse: mdp } });
+        if (e || !data || !data.ok) { toast((data && data.message) || 'Création impossible, réessayez.', 'ko'); return; }
+        const { error: e2 } = await sb.auth.signInWithPassword({ email, password: mdp });
+        if (e2) { toast('Accès créé. Connectez-vous avec votre e-mail.', 'ok'); location.hash = '#/compte'; return; }
+        await chargerProfil(); majEntete();
+        toast('Votre accès est créé, bienvenue !');
+        location.hash = '#/colis';
+      });
+    });
+  }
+
   async function vueAvis(colisId) {
     if (!exigerCompte()) return;
     const [{ data: k }, { data: deja }] = await Promise.all([
