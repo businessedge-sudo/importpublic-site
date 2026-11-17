@@ -390,10 +390,10 @@
           </div>
           ${c.accroche ? `<p class="accroche">${esc(c.accroche)}</p>` : ''}
           ${ouverte ? `<button type="button" class="btn btn-second btn-petit btn-partage" id="partager-campagne">${window.ICO.message}Partager à un proche</button>` : ''}
-          <div class="prix">${fcfa(c.prix_unitaire)}${c.prix_reference > c.prix_unitaire + (Number(c.frais_douane_unitaire) || 0) ? ` <s class="prix-barre">${fcfa(c.prix_reference)}</s>` : ''} <small class="discret">par unité, ${c.type_prix === 'TTC' ? 'hors taxes, transport jusqu\'à Lomé inclus' : 'hors transport et hors taxes'}</small></div>
+          <div class="prix">${fcfa(c.prix_unitaire)}${c.prix_reference > c.prix_unitaire + (c.type_prix === 'TTC' ? 0 : (Number(c.frais_douane_unitaire) || 0)) ? ` <s class="prix-barre">${fcfa(c.prix_reference)}</s>` : ''} <small class="discret">par unité, ${c.type_prix === 'TTC' ? 'tout compris : transport et douane inclus' : 'hors taxes, transport jusqu\'à Lomé inclus'}</small></div>
           ${(() => {
             // Comparaison honnête : notre prix + la douane connue, face au prix en boutique à Lomé
-            const douane = Number(c.frais_douane_unitaire) || 0;
+            const douane = c.type_prix === 'TTC' ? 0 : (Number(c.frais_douane_unitaire) || 0);
             const cout = Number(c.prix_unitaire) + douane;
             const eco = Number(c.prix_reference) - cout;
             if (!(eco > 0) || eco / c.prix_reference < 0.05) return '';
@@ -405,7 +405,6 @@
               <p>En échange : un peu de patience. Nous achetons en gros directement en Chine${c.mode_transport === 'maritime' ? ' et expédions par bateau' : ''}, c'est ce qui fait baisser le prix.${douane ? '' : ' Frais de douane et livraison communiqués à l\'arrivée du colis.'}</p>
             </div>`;
           })()}
-          ${c.type_prix === 'HT' && c.frais_transport_unitaire ? `<p class="discret">Transport à régler à l'arrivée : environ ${fcfa(c.frais_transport_unitaire)} par unité.</p>` : ''}
           <div id="zone-jauge" style="margin:12px 0">${window.IA.delaiCampagne(c)}</div>
           <dl class="cle-valeur">
             <dt>Transport</dt><dd>${esc(lib(c.mode_transport))} ${c.mode_transport === 'aerien' ? '(environ 3 semaines après la clôture)' : '(environ 45 à 60 jours après la clôture)'}</dd>
@@ -478,7 +477,7 @@
         <select id="point">${points.map((p) => `<option value="${p.id}">${esc(p.nom)}${p.ville ? ' · ' + esc(p.ville) : ''}</option>`).join('')}</select>`
         : points.length === 1 ? `<p class="aide" style="margin-top:10px">Retrait : <b>${esc(points[0].nom)}</b></p>` : ''}
       <div class="total"><span>Total à payer</span><b id="total">${fcfa(c.prix_unitaire)}</b></div>
-      <p class="aide" style="margin:2px 0 0">Hors taxes. ${c.frais_douane_unitaire ? `Frais de douane : ${fcfa(c.frais_douane_unitaire)} par unité, à régler au retrait.` : 'Frais de douane communiqués à l\'arrivée du colis.'} Livraison à domicile possible, selon votre quartier.</p>`;
+      <p class="aide" style="margin:2px 0 0">${c.type_prix === 'TTC' ? 'Tout compris : transport et douane inclus.' : `Hors taxes. ${c.frais_douane_unitaire ? `Frais de douane : ${fcfa(c.frais_douane_unitaire)} par unité, à régler au retrait.` : 'Frais de douane communiqués à l\'arrivée du colis.'}`} Livraison à domicile possible, selon votre quartier.</p>`;
   }
   function brancherChamps(zone, c) {
     const qte = zone.querySelector('#qte');
