@@ -1396,7 +1396,7 @@
       ${!cartesCommandes && !cartesDemandes ? '<div class="carte vide">Aucune commande pour le moment.</div>' : ''}
       ${listeDocs}
       ${cl.a_un_acces ? `<div class="carte"><p>Vous avez aussi un accès au site : <a href="#/compte">connectez-vous</a> pour voir vos messages et commander directement.</p></div>`
-        : `<details class="carte suivi-acces"><summary><b>Créer mon accès au site (facultatif)</b> · pour commander vous-même et recevoir les notifications</summary>
+        : `<details class="carte suivi-acces"><summary><b>👉 Créer mon compte Import Public</b> · en 1 minute, pour commander vous-même et être prévenu automatiquement</summary>
           <form id="form-acces">
             <p class="aide">Tout votre historique sera conservé. Ce lien de suivi continuera de fonctionner.</p>
             <label for="ac-email">Votre adresse e-mail</label><input id="ac-email" type="email" required autocomplete="email">
@@ -1405,6 +1405,10 @@
           </form></details>`}
       <p class="discret" style="text-align:center;margin-top:18px">Ce lien est personnel : ne le partagez pas.</p>`;
     const f = document.getElementById('form-acces');
+    if (f && params && params.get('acces')) {
+      const det = f.closest('details'); det.open = true;
+      setTimeout(() => det.scrollIntoView({ behavior: 'smooth', block: 'center' }), 200);
+    }
     if (f) f.addEventListener('submit', (ev) => {
       ev.preventDefault();
       occupe(f.querySelector('button'), async () => {
