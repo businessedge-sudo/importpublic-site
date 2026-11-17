@@ -1098,8 +1098,8 @@
         <a class="btn btn-second" href="#/messages">${window.ICO.bulle}Ajouter une précision</a>`;
     } else if (d.statut === 'devis_envoye') {
       action = `<h2>Notre proposition</h2>
-        <div class="total" style="border:0;margin:0"><span>Prix total hors taxes</span><b>${fcfa(d.montant_devis)}</b></div>
-        <p class="aide" style="margin:4px 0 0">Frais de douane et de livraison communiqués à l'arrivée du colis à Lomé.</p>
+        <div class="total" style="border:0;margin:0"><span>Prix total ${d.type_prix === 'TTC' ? 'tout compris' : 'hors taxes'}</span><b>${fcfa(d.montant_devis)}</b></div>
+        <p class="aide" style="margin:4px 0 0">${d.type_prix === 'TTC' ? 'Transport et douane inclus. Seule la livraison à domicile, si vous la choisissez, est en plus.' : 'Frais de douane et de livraison communiqués à l\'arrivée du colis à Lomé.'}</p>
         ${d.note_devis ? `<p style="white-space:pre-line">${esc(d.note_devis)}</p>` : ''}
         <div class="boutons"><button class="btn btn-ok" id="accepter">Accepter et payer</button><button class="btn btn-ko" id="refuser">Refuser</button></div>
         <p class="aide-commande">Une question avant d'accepter ? <a href="#/messages">Écrivez-nous</a>.</p>`;
@@ -1361,7 +1361,7 @@
       const etapes = ['annulee', 'a_rembourser', 'remboursee'].includes(o.statut) ? '' : frise(ETAPES_CAMPAGNE, o.campagne_statut === 'echec_quota' ? '' : o.campagne_statut);
       return `<div class="carte suivi-carte">
         <div class="suivi-tete">${o.image ? `<img src="${esc(urlImageCampagne(o.image))}" alt="">` : ''}
-          <div><h2>${esc(o.titre)}</h2><p class="discret">${o.quantite} pièce${o.quantite > 1 ? 's' : ''}${v ? ' · ' + esc(v) : ''} · ${fcfa(o.montant)} hors taxes</p>${badge(o.statut)}</div></div>
+          <div><h2>${esc(o.titre)}</h2><p class="discret">${o.quantite} pièce${o.quantite > 1 ? 's' : ''}${v ? ' · ' + esc(v) : ''} · ${fcfa(o.montant)} ${o.type_prix === 'TTC' ? 'tout compris' : 'hors taxes'}</p>${badge(o.statut)}</div></div>
         ${o.statut === 'en_attente_paiement' ? `<p>Pour réserver votre place, réglez <b>${fcfa(o.montant)}</b> avant la clôture du ${esc(date(o.date_cloture)).replace(/\.$/, '')}.</p>
           ${payer(o.montant, o.lien_paiement, `Bonjour, je souhaite payer ma commande de ${fcfa(o.montant)} : ${o.titre}, ${o.quantite} pièce${o.quantite > 1 ? 's' : ''}${v ? ' (' + v + ')' : ''}.`)}` : ''}
         ${etapes}
@@ -1373,7 +1373,7 @@
       const devis = docs.find((x) => x.type === 'devis' && x.demande_id === d.id);
       return `<div class="carte suivi-carte">
         <h2>Sur mesure : ${esc((d.description || '').slice(0, 80))}</h2>
-        <p class="discret">${d.quantite} pièce${d.quantite > 1 ? 's' : ''}${d.montant ? ' · ' + fcfa(d.montant) + ' hors taxes' : ''}</p>${badge(d.statut)}
+        <p class="discret">${d.quantite} pièce${d.quantite > 1 ? 's' : ''}${d.montant ? ' · ' + fcfa(d.montant) + (d.type_prix === 'TTC' ? ' tout compris' : ' hors taxes') : ''}</p>${badge(d.statut)}
         ${d.statut === 'nouvelle' ? '<p>Nous cherchons votre produit et vous envoyons notre meilleure proposition sous 48 h.</p>' : ''}
         ${['devis_envoye', 'acceptee'].includes(d.statut) ? `<p>Votre devis est prêt${devis ? ` : <a href="#/suivi/${esc(token)}/doc/${devis.id}">voir le devis ${esc(devis.numero)}</a>` : ''}. Pour l'accepter, payez <b>${fcfa(d.montant)}</b> :</p>
           ${payer(d.montant, d.lien_paiement, `Bonjour, j'accepte le devis${devis ? ' ' + devis.numero : ''} et je souhaite payer ${fcfa(d.montant)} pour : ${(d.description || '').slice(0, 60)}.`)}` : ''}
