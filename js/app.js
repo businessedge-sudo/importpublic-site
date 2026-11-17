@@ -619,7 +619,7 @@
     const lien = o.lienPaiement && (o.quantite || 1) === 1 ? o.lienPaiement : null;
     if (lien) {
       return `<div class="paiement-lien">
-          <a class="btn btn-large btn-ok" href="${esc(lien)}" target="_blank" rel="noopener">💳 Payer ${fcfa(o.montant)} en ligne</a>
+          <a class="btn btn-large btn-ok" href="${esc(lien)}" target="_blank" rel="noopener">📱 Payer ${fcfa(o.montant)} par Mobile Money</a>
           <p class="aide">La page de paiement s'ouvre dans un nouvel onglet. Une fois payé, revenez ici et envoyez-nous la référence de la transaction ci-dessous pour que nous validions votre commande.</p>
         </div>${blocPaiementBase(o)}`;
     }
@@ -872,7 +872,7 @@
       corps = `<h2>Commande préparée pour vous</h2>
         <p>Un Ambassadeur Commercial d'Import Public a préparé cette commande avec vous le ${date(o.created_at, true)}.
         Vérifiez le produit, la quantité et le montant ci-dessus.</p>
-        <p class="aide">Rien n'est payé tant que vous ne confirmez pas. Vous paierez ensuite vous-même, en ligne, depuis votre commande.
+        <p class="aide">Rien n'est payé tant que vous ne confirmez pas. Vous paierez ensuite vous-même par Mobile Money, depuis votre commande.
         Ne remettez jamais d'argent à un ambassadeur.</p>
         <div class="boutons"><button class="btn btn-ok" id="confirmer-cmd">${window.ICO.coche}Je confirme cette commande</button>
           <button class="btn btn-ko" id="refuser-cmd">Ce n'est pas ma commande</button></div>`;
@@ -1352,9 +1352,9 @@
           <p class="suivi-code">Code de retrait : <b>${esc(k.code)}</b></p>` : ''}
         ${k.douane > 0 && k.statut !== 'remis' ? `<p>Frais de douane à régler au retrait : <b>${fcfa(k.douane)}</b></p>` : ''}</div>`;
     const payer = (montant, lien, texte) => `<div class="suivi-payer">
-        ${lien ? `<a class="btn btn-ok" href="${esc(lien)}" target="_blank" rel="noopener">💳 Payer ${fcfa(montant)} en ligne</a>` : ''}
+        ${lien ? `<a class="btn btn-ok" href="${esc(lien)}" target="_blank" rel="noopener">📱 Payer ${fcfa(montant)} par Mobile Money</a>` : ''}
         ${wa(texte) ? `<a class="btn btn-wa" href="${wa(texte)}" target="_blank" rel="noopener">${lien ? 'Payer avec notre aide' : 'Payer ' + fcfa(montant) + ' via WhatsApp'}</a>` : ''}
-        ${lien ? '<p class="aide">Après un paiement en ligne, envoyez-nous la référence reçue sur WhatsApp : nous validons et votre reçu apparaît ici.</p>' : ''}</div>`;
+        ${lien ? '<p class="aide">Après votre paiement Mobile Money, envoyez-nous la référence reçue sur WhatsApp : nous validons et votre reçu apparaît ici.</p>' : ''}</div>`;
 
     const cartesCommandes = (s2.commandes || []).map((o) => {
       const v = o.variante && typeof o.variante === 'object' ? Object.entries(o.variante).map(([k, x]) => `${k} : ${x}`).join(', ') : '';
