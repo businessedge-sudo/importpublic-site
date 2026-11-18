@@ -35,6 +35,30 @@
     p.delete('ac');
     history.replaceState(null, '', location.pathname + (p.toString() ? '?' + p : '') + location.hash);
   }
+  // Lien de suivi d'une campagne de communication : https://importpublic.com/?src=code
+  // On garde le DERNIER lien cliqué pendant 30 jours, pour compter visites, comptes et commandes par lien.
+  function capterSource() {
+    const p = new URLSearchParams(location.search);
+    const code = (p.get('src') || '').trim().toLowerCase();
+    if (!/^[a-z0-9-]{2,40}$/.test(code)) return;
+    let visiteur = memo.lire('ip_visiteur');
+    if (!visiteur) {
+      visiteur = (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : 'v' + Date.now() + Math.random().toString(36).slice(2);
+      memo.ecrire('ip_visiteur', visiteur);
+    }
+    memo.ecrire('ip_src', { code, t: Date.now() });
+    sb.rpc('enregistrer_visite_lien', { p_code: code, p_visiteur: visiteur }).then(() => {}, () => {});
+    p.delete('src');
+    history.replaceState(null, '', location.pathname + (p.toString() ? '?' + p : '') + location.hash);
+  }
+  const sourceValide = () => {
+    const x = memo.lire('ip_src');
+    return x && Date.now() - x.t <= DUREE_PARRAINAGE ? x.code : null;
+  };
+  const attribuerSource = (ids) => {
+    const code = sourceValide();
+    if (code) sb.rpc('attribuer_source', { p_code: code, p_commande: ids.commande || null, p_demande: ids.demande || null }).then(() => {}, () => {});
+  };
   const parrainValide = () => {
     const x = memo.lire('ip_parrain');
     return x && Date.now() - x.t <= DUREE_PARRAINAGE ? x : null;
@@ -45,6 +69,7 @@
   // ------------------------------------------------------------------
   async function demarrer() {
     capterParrainage();
+    capterSource();
     const { data } = await sb.auth.getSession();
     etat.session = data.session;
     await Promise.all([chargerProfil(), chargerGroupeur()]);
@@ -461,6 +486,7 @@
             toast(/duplicate|unique/i.test(error.message) ? 'Vous avez déjà réservé cette variante : modifiez la quantité dans votre commande.' : msgErreur(error), 'ko');
             return;
           }
+          attribuerSource({ commande: data.id });
           location.hash = '#/commande/' + data.id;
         });
       });
@@ -626,6 +652,7 @@
           p_point: p ? p.value : ((etat.points && etat.points[0]) || {}).id || null
         });
         if (e2) { toast(msgErreur(e2), 'ko'); return; }
+        attribuerSource({ demande: data });
         toast('Commande envoyée ! Nous vérifions la disponibilité.');
         location.hash = '#/demande/' + data;
       });
@@ -1244,6 +1271,7 @@
           photo_path
         }).select('id').single();
         if (error) { toast(msgErreur(error), 'ko'); return; }
+        attribuerSource({ demande: data.id });
         toast('Demande envoyée ! On continue dans votre messagerie.');
         location.hash = '#/messages';
       });
@@ -1825,6 +1853,7 @@
         const meta = { nom_complet: document.getElementById('i-nom').value.trim(), telephone: tel,
                        pays: paysChoisi, region: document.getElementById('i-region').value.trim() };
         if (parrain) { meta.ac = parrain.code; meta.ac_vu_le = new Date(parrain.t).toISOString(); }
+        if (sourceValide()) meta.src = sourceValide();
         const { data, error } = await sb.auth.signUp({
           email: document.getElementById('i-email').value.trim(),
           password: document.getElementById('i-mdp').value,
