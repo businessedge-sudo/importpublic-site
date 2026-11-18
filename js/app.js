@@ -152,7 +152,7 @@
     const [chemin, qs] = brut.split('?');
     const morceaux = chemin.split('/').filter(Boolean);
     const params = new URLSearchParams(qs || '');
-    const onglet = { '': 'campagnes', campagne: 'campagnes', 'sur-mesure': 'sur-mesure', demande: 'colis',
+    const onglet = { '': 'campagnes', campagne: 'campagnes', disponible: 'disponible', article: 'disponible', 'sur-mesure': 'sur-mesure', demande: 'colis',
                      commande: 'colis', colis: 'colis', compte: 'compte', reinitialiser: 'compte',
                      ambassadeur: 'compte', ac: 'compte', messages: 'messages', document: 'messages', avis: 'colis', suivi: 'colis' }[morceaux[0] || ''];
     document.querySelectorAll('.nav-bas a, .nav-haut a').forEach((a) => a.classList.toggle('actif', a.dataset.onglet === onglet));
@@ -164,6 +164,7 @@
 
     const routes = {
       '': vueAccueil, campagne: vueCampagne, commande: vueCommande, 'sur-mesure': vueSurMesure,
+      disponible: vueDisponible, article: vueArticle,
       demande: vueDemande, colis: vueColis, compte: vueCompte, reinitialiser: vueReinitialiser, messages: vueMessages,
       document: vueDocument, avis: vueAvis, suivi: vueSuivi, ...espaceAC.routes
     };
@@ -186,9 +187,12 @@
   // Accueil : campagnes en cours
   // ------------------------------------------------------------------
   async function vueAccueil() {
-    const { data, error } = await sb.from('campagnes')
-      .select('id,titre,prix_unitaire,prix_reference,frais_douane_unitaire,type_prix,date_cloture,ouverte_le,created_at,mode_transport,statut,image_url,accroche')
-      .neq('statut', 'brouillon').order('date_cloture', { ascending: true }).limit(60);
+    const [{ data, error }, lome] = await Promise.all([
+      sb.from('campagnes')
+        .select('id,titre,prix_unitaire,prix_reference,frais_douane_unitaire,type_prix,date_cloture,ouverte_le,created_at,mode_transport,statut,image_url,accroche')
+        .neq('statut', 'brouillon').order('date_cloture', { ascending: true }).limit(60),
+      chargerArticles(12)
+    ]);
     if (error) throw error;
 
     const ouvertes = data.filter((c) => c.statut === 'ouverte' && new Date(c.date_cloture) > new Date());
@@ -219,6 +223,13 @@
           <div class="hero-badge">${remiseMax >= 10 ? `<small>Jusqu'à</small><b>-${remiseMax}%</b>` : `<small>Payez en</small><b>F CFA</b>`}</div>
         </div>
       </section>
+
+      ${lome.length ? `<div class="titre-section titre-lome">
+          <h2><span class="ico-titre lome">${I.camion}</span>Disponible tout de suite</h2>
+          <a class="lien-tout" href="#/disponible">Tout voir${I.fleche}</a>
+        </div>
+        <p class="sous-titre-lome">Déjà à Lomé : commandez aujourd'hui, recevez ${(() => { const h = lome.map((o) => o.delai_heures || 48); const mi = Math.min(...h), ma = Math.max(...h); return mi === ma ? 'sous ' + delaiTexte(mi) : `en ${mi} à ${ma} h selon l'article`; })()} chez vous ou au point de retrait.</p>
+        <div class="liste-campagnes liste-lome" id="grille-lome">${lome.map(carteArticle).join('')}</div>` : ''}
 
       <div class="titre-section" id="offres">
         <h2><span class="ico-titre flamme">${I.flamme}</span>Nos offres en cours</h2>
@@ -297,6 +308,7 @@
     const q = (etat.recherche || '').trim().toLowerCase();
     let n = 0;
     grille.querySelectorAll('.campagne').forEach((el) => { const ok = !q || el.dataset.titre.includes(q); el.hidden = !ok; if (ok) n++; });
+    document.querySelectorAll('#grille-lome .campagne').forEach((el) => { const ok = !q || el.dataset.titre.includes(q); el.hidden = !ok; if (ok) n++; });
     const vide = document.getElementById('aucun-resultat');
     if (vide) vide.hidden = n > 0;
   }
@@ -462,6 +474,165 @@
   }
 
   // ------------------------------------------------------------------
+  // Disponible à Lomé : articles trouvés chez nos fournisseurs locaux
+  // (commande -> confirmation du stock et devis -> paiement -> retrait ou livraison avec code)
+  // ------------------------------------------------------------------
+  const delaiTexte = (h) => `${Number(h) || 48} h`;
+  async function chargerArticles(limite) {
+    let q = sb.from('offres').select('id,titre,accroche,prix,prix_reference,image_url,images,delai_heures,statut,categorie,mise_en_avant')
+      .eq('statut', 'active').order('mise_en_avant', { ascending: false }).order('created_at', { ascending: false });
+    if (limite) q = q.limit(limite);
+    const { data, error } = await q;
+    if (error) { console.warn('Articles indisponibles', error); return []; }
+    return data || [];
+  }
+  const economie = (o) => {
+    const ref = Number(o.prix_reference) || 0; const eco = ref > o.prix ? ref - o.prix : 0;
+    const pct = eco ? Math.round((100 * eco) / ref) : 0;
+    return pct >= 5 ? { eco, pct, ref } : null;
+  };
+  const blocPrixArticle = (o) => {
+    const e = economie(o);
+    return `<div class="bloc-prix petit">
+      <div class="bp-haut"><span class="bp-prix">${fcfa(o.prix)}</span>
+        ${e ? `<span class="bp-avant"><small>Ailleurs</small><s>${fcfa(e.ref)}</s></span>` : ''}</div>
+      <div class="bp-ht">Tout compris · hors livraison</div>
+      ${e ? `<div class="bp-eco"><span class="bp-long">Vous économisez</span><span class="bp-court">Économie</span><b>${fcfa(e.eco)}</b><em>-${e.pct} %</em></div>` : ''}
+    </div>`;
+  };
+  function carteArticle(o) {
+    const I = window.ICO;
+    const e = economie(o);
+    return `<article class="campagne carte-lome" data-titre="${esc(o.titre.toLowerCase())}">
+      <a class="campagne-image" href="#/article/${o.id}" aria-label="${esc(o.titre)}">
+        <img src="${esc(urlImageCampagne(o.image_url))}" alt="" loading="lazy">
+        <span class="pastille-rapide">${I.camion}${delaiTexte(o.delai_heures)}</span>
+        ${e ? `<span class="pastille-remise">-${e.pct}%</span>` : ''}
+      </a>
+      <div class="campagne-corps">
+        <a class="campagne-titre" href="#/article/${o.id}">${esc(o.titre)}</a>
+        ${o.accroche ? `<p class="accroche petite">${esc(o.accroche)}</p>` : ''}
+        ${blocPrixArticle(o)}
+        <a class="btn btn-large btn-reserver" href="#/article/${o.id}">${I.panier}Commander</a>
+      </div></article>`;
+  }
+
+  async function vueDisponible() {
+    const articles = await chargerArticles();
+    const cats = [...new Set(articles.map((o) => o.categorie).filter(Boolean))].sort();
+    const I = window.ICO;
+    vue.innerHTML = `
+      <section class="intro intro-lome">
+        <h1>Disponible tout de suite à Lomé</h1>
+        <p>Des articles déjà à Lomé, sélectionnés chez nos fournisseurs. Pas d'attente de bateau ni d'avion : commandez aujourd'hui, recevez sous 24 à 72 h selon l'article, chez vous ou au point de retrait.</p>
+      </section>
+      ${cats.length > 1 ? `<div class="filtres filtres-lome"><button class="actif" data-cat="">Tout</button>${cats.map((c) => `<button data-cat="${esc(c)}">${esc(c)}</button>`).join('')}</div>` : ''}
+      ${articles.length ? `<div class="liste-campagnes" id="grille-dispo">${articles.map((o) => carteArticle(o).replace('<article class="campagne carte-lome"', `<article class="campagne carte-lome" data-cat="${esc(o.categorie || '')}"`)).join('')}</div>`
+        : `<div class="carte vide"><p><b>Aucun article disponible pour le moment.</b></p><p>Revenez bientôt, ou découvrez nos commandes groupées.</p><a class="btn" href="#/">Voir les offres</a></div>`}
+      <section class="bloc-etapes">
+        <h2><span class="ico-titre fusee">${I.fusee}</span>Comment ça marche ?</h2>
+        <ol class="etapes">
+          <li><span class="etape-ico jaune">${I.panier}</span><div><b>Vous commandez</b><span>En quelques secondes, depuis votre téléphone.</span></div></li>
+          <li><span class="etape-ico bleu">${I.coche}</span><div><b>Nous confirmons</b><span>Disponibilité vérifiée et prix final envoyé, en général dans la journée.</span></div></li>
+          <li><span class="etape-ico bleu">${I.telephone}</span><div><b>Vous payez</b><span>Par Mobile Money, en toute sécurité.</span></div></li>
+          <li><span class="etape-ico brun">${I.camion}</span><div><b>Vous recevez</b><span>Livraison chez vous ou retrait, avec votre code personnel.</span></div></li>
+        </ol>
+      </section>`;
+    vue.querySelectorAll('[data-cat]').forEach((b) => b.tagName === 'BUTTON' && b.addEventListener('click', () => {
+      vue.querySelectorAll('.filtres-lome button').forEach((x) => x.classList.toggle('actif', x === b));
+      vue.querySelectorAll('#grille-dispo .campagne').forEach((el) => { el.hidden = !!b.dataset.cat && el.dataset.cat !== b.dataset.cat; });
+    }));
+  }
+
+  async function vueArticle(id) {
+    const { data: o, error } = await sb.from('offres').select('*').eq('id', id).maybeSingle();
+    if (error) throw error;
+    if (!o || o.statut === 'archivee' || o.statut === 'brouillon') {
+      vue.innerHTML = `<div class="carte vide"><p>Cet article n'est plus disponible.</p><a class="btn" href="#/disponible">Voir les autres articles</a></div>`; return;
+    }
+    const points = await chargerPoints();
+    const dispo = o.statut === 'active';
+    const e = economie(o);
+    const g = etat.groupeur || {};
+    const I = window.ICO;
+    vue.innerHTML = `
+      <a class="retour" href="#/disponible">← Disponible à Lomé</a>
+      <div class="deux-colonnes">
+      <div class="colonne">
+      <div class="carte" style="padding:0;overflow:hidden">
+        ${galeriePhotos(o)}
+        ${o.description ? `<div style="padding:16px"><h2>Description</h2><p style="white-space:pre-line">${esc(o.description)}</p></div>` : ''}
+      </div>
+      </div>
+      <div class="colonne colonne-collante">
+      <div class="carte">
+        <div style="display:flex;justify-content:space-between;gap:10px;align-items:flex-start">
+          <h1>${esc(o.titre)}</h1>${dispo ? `<span class="badge badge-ok">Disponible</span>` : `<span class="badge badge-alerte">Épuisé</span>`}
+        </div>
+        ${o.accroche ? `<p class="accroche">${esc(o.accroche)}</p>` : ''}
+        <div class="prix">${fcfa(o.prix)}${e ? ` <s class="prix-barre">${fcfa(e.ref)}</s>` : ''} <small class="discret">par pièce, tout compris. Seule la livraison à domicile, si vous la choisissez, est en plus.</small></div>
+        ${e ? `<div class="encart-economie">
+            <div><span>Prix constaté ailleurs à Lomé</span><b>${fcfa(e.ref)}</b></div>
+            <div><span>Prix Import Public</span><b>${fcfa(o.prix)}</b></div>
+            <div class="encart-total"><span>Vous économisez</span><b>${fcfa(e.eco)} (-${e.pct} %)</b></div></div>` : ''}
+        <div class="encart-rapide">${I.camion}<div><b>Prêt sous ${delaiTexte(o.delai_heures)} après paiement</b><span>Livraison chez vous ou retrait au point de retrait, avec votre code personnel.</span></div></div>
+      </div>
+      ${dispo ? `<div class="carte" id="form-article">
+        <h2>Commander</h2>
+        <label for="qte">Quantité</label>
+        <div class="quantite"><button type="button" data-d="-1" aria-label="Moins">−</button>
+          <input id="qte" type="number" inputmode="numeric" min="1" max="50" value="1"><button type="button" data-d="1" aria-label="Plus">+</button></div>
+        ${points.length > 1 ? `<label for="point">Point de retrait</label>
+          <select id="point">${points.map((p) => `<option value="${p.id}">${esc(p.nom)}${p.ville ? ' · ' + esc(p.ville) : ''}</option>`).join('')}</select>
+          <p class="aide">Vous préférez être livré ? Dites-le-nous après la commande : les frais dépendent de votre quartier.</p>` : ''}
+        <label for="precision">Une précision ? <small class="discret">(facultatif)</small></label>
+        <input id="precision" maxlength="300" placeholder="Couleur, taille, livraison souhaitée…">
+        <div class="total"><span>Total</span><b id="total">${fcfa(o.prix)}</b></div>
+        <button class="btn btn-large" id="btn-commander-article">${etat.session ? 'Commander' : 'Se connecter pour commander'}</button>
+        <ol class="etapes-paiement" style="margin-top:12px">
+          <li><b>Nous confirmons la disponibilité</b> et vous envoyons le prix final, en général dans la journée.</li>
+          <li><b>Vous payez par Mobile Money</b> une fois le devis accepté. Rien à payer avant.</li>
+          <li><b>Vous recevez votre article</b> chez vous ou au point de retrait, avec votre code.</li>
+        </ol>
+      </div>` : `<div class="carte"><div class="alerte alerte-info">Cet article est épuisé pour le moment.</div>
+        ${g.whatsapp ? `<a class="btn btn-wa" target="_blank" rel="noopener" href="${waLien(g.whatsapp, 'Bonjour Import Public, prévenez-moi quand « ' + o.titre + ' » sera de nouveau disponible.')}">Me prévenir sur WhatsApp</a>` : ''}
+        <a class="btn btn-second" href="#/disponible">Voir les autres articles</a></div>`}
+      ${g.whatsapp ? `<button type="button" class="btn btn-second btn-petit btn-partage" id="partager-article">${I.message}Partager à un proche</button>` : ''}
+      </div>
+      </div>`;
+    brancherGalerie();
+
+    const bP = document.getElementById('partager-article');
+    if (bP) bP.addEventListener('click', async () => {
+      const lien = `${cfg.urlSite}/#/article/${o.id}`;
+      const texte = `À voir : ${o.titre}, ${fcfa(o.prix)} tout compris, disponible à Lomé chez Import Public.`;
+      if (navigator.share) { try { await navigator.share({ title: o.titre, text: texte, url: lien }); return; } catch { /* annulé */ } }
+      window.open('https://wa.me/?text=' + encodeURIComponent(texte + '\n' + lien), '_blank', 'noopener');
+    });
+
+    const zone = document.getElementById('form-article');
+    if (!zone) return;
+    const qte = zone.querySelector('#qte');
+    const lireQ = () => Math.min(50, Math.max(1, parseInt(qte.value, 10) || 1));
+    const majTotal = () => { zone.querySelector('#total').textContent = fcfa(lireQ() * o.prix); };
+    zone.querySelectorAll('.quantite button').forEach((b) => b.addEventListener('click', () => { qte.value = Math.min(50, Math.max(1, lireQ() + Number(b.dataset.d))); majTotal(); }));
+    qte.addEventListener('input', majTotal);
+    document.getElementById('btn-commander-article').addEventListener('click', (ev) => {
+      if (!exigerCompte()) return;
+      const p = zone.querySelector('#point');
+      occupe(ev.currentTarget, async () => {
+        const { data, error: e2 } = await sb.rpc('commander_offre', {
+          p_offre: o.id, p_quantite: lireQ(), p_note: zone.querySelector('#precision').value.trim() || null,
+          p_point: p ? p.value : ((etat.points && etat.points[0]) || {}).id || null
+        });
+        if (e2) { toast(msgErreur(e2), 'ko'); return; }
+        toast('Commande envoyée ! Nous vérifions la disponibilité.');
+        location.hash = '#/demande/' + data;
+      });
+    });
+  }
+
+  // ------------------------------------------------------------------
   // Champs de commande : variantes (boutons), quantité, point de retrait.
   // Partagés avec « Commander pour un client » (espace Ambassadeur).
   // ------------------------------------------------------------------
@@ -547,12 +718,14 @@
     const fait = Object.fromEntries((ops || []).map((x) => [x.etape, x.fait_le]));
     const h = {}; (historique || []).forEach((x) => { if (!h[x.statut]) h[x.statut] = x.created_at; });
     const auPoint = cl && ['recu', 'remis', 'non_recupere', 'litige'].includes(cl.statut);
+    const local = !!d.offre_id;
     const etapes = [
-      ['Demande reçue', h.nouvelle || d.created_at, true],
-      ['Prix envoyé', h.devis_envoye, !!h.devis_envoye || d.montant_devis != null],
+      [local ? 'Commande reçue' : 'Demande reçue', h.nouvelle || d.created_at, true],
+      [local ? 'Disponibilité confirmée, prix envoyé' : 'Prix envoyé', h.devis_envoye, !!h.devis_envoye || d.montant_devis != null],
       ['Prix accepté', h.acceptee, !!h.acceptee],
       ['Paiement validé', h.payee, !!h.payee],
-      ...ETAPES_CLIENT.map(([k, l]) => [l, fait[k], !!fait[k]]),
+      ...(local ? [['Récupéré chez notre fournisseur à Lomé', fait.recupere || h.arrivee, !!(fait.recupere || h.arrivee)]]
+        : ETAPES_CLIENT.map(([k, l]) => [l, fait[k], !!fait[k]])),
       ['Prêt au retrait', cl && cl.recu_le, auPoint || d.statut === 'livree'],
       ...(d.statut === 'livree' ? [['Colis remis', (cl && cl.remis_le) || d.recu_le, true]] : [])
     ];
@@ -1091,15 +1264,18 @@
     const enLigne = (paiements || []).find((p) => p.agregateur === 'paygate' && p.statut === 'initie');
     const suiviD = await suiviDemandeDetaille(d, historique);
     memo.ecrire('ip_vu_d_' + d.id, Date.now());
+    const local = !!d.offre_id;
+    const art = local ? (await sb.from('offres').select('id,titre,image_url,delai_heures,statut').eq('id', d.offre_id).maybeSingle()).data : null;
 
     let action = '';
     if (d.statut === 'nouvelle') {
-      action = `<div class="alerte alerte-info">Nous étudions votre demande. Vous recevrez un prix ici, en général sous 48 h.</div>
+      action = local ? `<div class="alerte alerte-info">Nous vérifions la disponibilité auprès de notre fournisseur à Lomé. Vous recevrez le prix final ici, en général dans la journée.</div>`
+        : `<div class="alerte alerte-info">Nous étudions votre demande. Vous recevrez un prix ici, en général sous 48 h.</div>
         <a class="btn btn-second" href="#/messages">${window.ICO.bulle}Ajouter une précision</a>`;
     } else if (d.statut === 'devis_envoye') {
       action = `<h2>Notre proposition</h2>
         <div class="total" style="border:0;margin:0"><span>Prix total ${d.type_prix === 'TTC' ? 'tout compris' : 'hors taxes'}</span><b>${fcfa(d.montant_devis)}</b></div>
-        <p class="aide" style="margin:4px 0 0">${d.type_prix === 'TTC' ? 'Transport et douane inclus. Seule la livraison à domicile, si vous la choisissez, est en plus.' : 'Frais de douane et de livraison communiqués à l\'arrivée du colis à Lomé.'}</p>
+        <p class="aide" style="margin:4px 0 0">${local ? `Article disponible à Lomé, prêt sous ${delaiTexte((art && art.delai_heures) || 48)} après paiement. Seule la livraison à domicile, si vous la choisissez, est en plus.` : d.type_prix === 'TTC' ? 'Transport et douane inclus. Seule la livraison à domicile, si vous la choisissez, est en plus.' : 'Frais de douane et de livraison communiqués à l\'arrivée du colis à Lomé.'}</p>
         ${d.note_devis ? `<p style="white-space:pre-line">${esc(d.note_devis)}</p>` : ''}
         <div class="boutons"><button class="btn btn-ok" id="accepter">Accepter et payer</button><button class="btn btn-ko" id="refuser">Refuser</button></div>
         <p class="aide-commande">Une question avant d'accepter ? <a href="#/messages">Écrivez-nous</a>.</p>`;
@@ -1109,12 +1285,13 @@
     } else if (d.statut === 'arrivee' && colisHtml) {
       action = '';
     } else if (d.statut === 'arrivee') {
-      action = `<h2>Votre colis est arrivé à Lomé</h2><p>Une fois le colis en main, confirmez la réception.</p>
+      action = `<h2>${local ? 'Votre article est prêt' : 'Votre colis est arrivé à Lomé'}</h2><p>Une fois le colis en main, confirmez la réception.</p>
         <button class="btn btn-large btn-ok" id="confirmer-reception">${window.ICO.coche}J'ai reçu mon colis</button>`;
     } else if (d.statut === 'livree') {
       action = `<div class="alerte alerte-ok">${d.recu_le ? 'Réception confirmée le ' + date(d.recu_le, true) + '.' : 'Commande livrée.'} Merci pour votre confiance&nbsp;!</div>`;
     } else if (d.statut === 'refusee') {
-      action = `<div class="alerte alerte-info">Vous avez refusé ce devis. Une autre idée ? <a href="#/sur-mesure">Nouvelle demande</a></div>`;
+      action = local ? `<div class="alerte alerte-info">Vous avez refusé ce devis. <a href="#/disponible">Voir les autres articles disponibles</a></div>`
+        : `<div class="alerte alerte-info">Vous avez refusé ce devis. Une autre idée ? <a href="#/sur-mesure">Nouvelle demande</a></div>`;
     } else if (d.statut === 'annulee') {
       action = `<div class="alerte alerte-info">Cette demande a été annulée.</div>`;
     }
@@ -1124,7 +1301,7 @@
     const annulable = ['nouvelle', 'devis_envoye', 'acceptee'].includes(d.statut) && !enVerif;
     const gestionDemande = annulable ? `<div class="carte">
         <h2>Gérer ma demande</h2>
-        ${d.statut === 'nouvelle' ? `<form id="form-modif-demande" hidden>
+        ${local ? '<p class="discret">Une précision (couleur, taille, quantité) ? Écrivez-nous dans la messagerie.</p>' : d.statut === 'nouvelle' ? `<form id="form-modif-demande" hidden>
             <label for="md-desc">Description</label><textarea id="md-desc" required minlength="2" maxlength="2000">${esc(d.description)}</textarea>
             <label for="md-lien">Lien (facultatif)</label><input id="md-lien" type="text" inputmode="url" value="${esc(d.lien || '')}">
             <div class="rangee"><div><label for="md-qte">Quantité</label><input id="md-qte" type="number" min="1" value="${d.quantite}"></div>
@@ -1132,26 +1309,26 @@
             <div class="boutons"><button class="btn">Enregistrer</button><button type="button" class="btn btn-second" id="md-fermer">Fermer</button></div>
           </form>` : '<p class="discret">Nous avons déjà chiffré votre demande : pour la modifier, écrivez-nous.</p>'}
         <div class="boutons" id="boutons-demande">
-          ${d.statut === 'nouvelle' ? '<button class="btn btn-second" id="md-ouvrir">Modifier ma demande</button>' : ''}
-          <button class="btn btn-ko" id="annuler-demande">Annuler la demande</button>
+          ${d.statut === 'nouvelle' && !local ? '<button class="btn btn-second" id="md-ouvrir">Modifier ma demande</button>' : ''}
+          <button class="btn btn-ko" id="annuler-demande">${local ? 'Annuler ma commande' : 'Annuler la demande'}</button>
         </div>
         <div id="confirmer-annulation"></div>
       </div>`
       : ['payee', 'commandee', 'entrepot_chine', 'en_transit', 'arrivee'].includes(d.statut) && g.whatsapp
-        ? `<p class="aide-commande">Un souci avec cette demande ? <a target="_blank" rel="noopener" href="${waLien(g.whatsapp, 'Bonjour Import Public, au sujet de ma demande sur mesure : ')}">Écrivez-nous sur WhatsApp</a>.</p>` : '';
+        ? `<p class="aide-commande">Un souci avec cette ${local ? 'commande' : 'demande'} ? <a target="_blank" rel="noopener" href="${waLien(g.whatsapp, local ? 'Bonjour Import Public, au sujet de ma commande « ' + d.description.slice(0, 60) + ' » : ' : 'Bonjour Import Public, au sujet de ma demande sur mesure : ')}">Écrivez-nous sur WhatsApp</a>.</p>` : '';
 
     vue.innerHTML = `
       <a class="retour" href="#/colis">← Mes colis</a>
       <div class="deux-colonnes"><div class="colonne">
       <div class="carte">
-        <div style="display:flex;justify-content:space-between;gap:10px"><h1>Demande sur mesure</h1>${badge(d.statut)}</div>
-        <p style="white-space:pre-line">${esc(d.description)}</p>
-        ${photoUrl ? `<img class="photo-apercu" src="${esc(photoUrl)}" alt="Photo envoyée">` : ''}
+        <div style="display:flex;justify-content:space-between;gap:10px"><h1>${local ? 'Article disponible à Lomé' : 'Demande sur mesure'}</h1>${badge(d.statut)}</div>
+        <p style="white-space:pre-line">${local && art ? `<a href="#/article/${art.id}">${esc(d.description)}</a>` : esc(d.description)}</p>
+        ${photoUrl ? `<img class="photo-apercu" src="${esc(photoUrl)}" alt="Photo envoyée">` : art && art.image_url ? `<img class="photo-apercu" src="${esc(urlImageCampagne(art.image_url))}" alt="">` : ''}
         <dl class="cle-valeur" style="margin-top:12px">
           <dt>Quantité</dt><dd>${d.quantite}</dd>
           ${d.budget ? `<dt>Votre budget</dt><dd>${fcfa(d.budget)}</dd>` : ''}
           ${d.lien ? `<dt>Lien</dt><dd>${/^https?:\/\//i.test(d.lien) ? `<a href="${esc(d.lien)}" target="_blank" rel="noopener">Ouvrir</a>` : esc(d.lien)}</dd>` : ''}
-          <dt>Envoyée le</dt><dd>${date(d.created_at, true)}</dd>
+          <dt>${local ? 'Commandé le' : 'Envoyée le'}</dt><dd>${date(d.created_at, true)}</dd>
         </dl>
       </div>
       </div><div class="colonne">
@@ -1222,7 +1399,7 @@
     const [co, de] = await Promise.all([
       sb.from('commandes').select('id,campagne_id,quantite,montant_total,statut,confirmation,variante,created_at,campagnes(titre,statut,image_url),colis(statut)')
         .eq('client_id', uid).order('created_at', { ascending: false }),
-      sb.from('demandes').select('id,description,statut,montant_devis,created_at').eq('client_id', uid).order('created_at', { ascending: false })
+      sb.from('demandes').select('id,description,statut,montant_devis,created_at,offre_id').eq('client_id', uid).order('created_at', { ascending: false })
     ]);
     if (co.error) throw co.error;
     if (de.error) throw de.error;
@@ -1258,10 +1435,10 @@
             ${misAJour(o) ? '<span class="pastille-maj">Mis à jour</span>' : ''}${badge(statutAffiche(o))}</a>`).join('')
           : '<p class="discret">Aucune commande pour le moment. <a href="#/">Voir les campagnes</a></p>'}
       </div>
-      <div class="carte"><h2>Demandes sur mesure</h2>
+      <div class="carte"><h2>Sur mesure et articles à Lomé</h2>
         ${de.data.length ? de.data.map((d) => `
           <a class="ligne" href="#/demande/${d.id}">
-            <div style="flex:1;min-width:0"><div class="ligne-titre" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(d.description)}</div>
+            <div style="flex:1;min-width:0"><div class="ligne-titre" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${d.offre_id ? '📍 ' : ''}${esc(d.description)}</div>
               <small>${date(d.created_at)}${d.montant_devis ? ' · ' + fcfa(d.montant_devis) : ''}</small></div>
             ${badge(d.statut)}</a>`).join('')
           : '<p class="discret">Aucune demande. <a href="#/sur-mesure">Faire une demande</a></p>'}
