@@ -523,7 +523,7 @@
     const I = window.ICO;
     vue.innerHTML = `
       <section class="intro intro-lome">
-        <h1>Disponible tout de suite à Lomé</h1>
+        <h1>Disponible tout de suite</h1>
         <p>Des articles déjà à Lomé, sélectionnés chez nos fournisseurs. Pas d'attente de bateau ni d'avion : commandez aujourd'hui, recevez sous 24 à 72 h selon l'article, chez vous ou au point de retrait.</p>
       </section>
       ${cats.length > 1 ? `<div class="filtres filtres-lome"><button class="actif" data-cat="">Tout</button>${cats.map((c) => `<button data-cat="${esc(c)}">${esc(c)}</button>`).join('')}</div>` : ''}
@@ -556,7 +556,7 @@
     const g = etat.groupeur || {};
     const I = window.ICO;
     vue.innerHTML = `
-      <a class="retour" href="#/disponible">← Disponible à Lomé</a>
+      <a class="retour" href="#/disponible">← Disponible tout de suite</a>
       <div class="deux-colonnes">
       <div class="colonne">
       <div class="carte" style="padding:0;overflow:hidden">
@@ -1321,7 +1321,7 @@
       <a class="retour" href="#/colis">← Mes colis</a>
       <div class="deux-colonnes"><div class="colonne">
       <div class="carte">
-        <div style="display:flex;justify-content:space-between;gap:10px"><h1>${local ? 'Article disponible à Lomé' : 'Demande sur mesure'}</h1>${badge(d.statut)}</div>
+        <div style="display:flex;justify-content:space-between;gap:10px"><h1>${local ? 'Disponible tout de suite' : 'Demande sur mesure'}</h1>${badge(d.statut)}</div>
         <p style="white-space:pre-line">${local && art ? `<a href="#/article/${art.id}">${esc(d.description)}</a>` : esc(d.description)}</p>
         ${photoUrl ? `<img class="photo-apercu" src="${esc(photoUrl)}" alt="Photo envoyée">` : art && art.image_url ? `<img class="photo-apercu" src="${esc(urlImageCampagne(art.image_url))}" alt="">` : ''}
         <dl class="cle-valeur" style="margin-top:12px">
@@ -1435,7 +1435,7 @@
             ${misAJour(o) ? '<span class="pastille-maj">Mis à jour</span>' : ''}${badge(statutAffiche(o))}</a>`).join('')
           : '<p class="discret">Aucune commande pour le moment. <a href="#/">Voir les campagnes</a></p>'}
       </div>
-      <div class="carte"><h2>Sur mesure et articles à Lomé</h2>
+      <div class="carte"><h2>Sur mesure et disponible tout de suite</h2>
         ${de.data.length ? de.data.map((d) => `
           <a class="ligne" href="#/demande/${d.id}">
             <div style="flex:1;min-width:0"><div class="ligne-titre" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${d.offre_id ? '📍 ' : ''}${esc(d.description)}</div>
