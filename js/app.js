@@ -782,6 +782,16 @@
     'Quantité : ' + quantite + ' pièce' + (quantite > 1 ? 's' : ''),
     ...Object.entries(variante && typeof variante === 'object' ? variante : {}).map(([k, v]) => k + ' : ' + v)].join('\n');
 
+  // Montant à recopier sur la page de paiement (lien à montant libre)
+  const blocMontantASaisir = (montant) => `<div class="montant-saisir"><span>Montant à saisir</span><b>${fcfa(montant)}</b>
+      <button type="button" class="btn btn-second btn-petit" data-copier-montant="${Number(montant) || 0}">Copier le montant</button></div>`;
+  document.addEventListener('click', async (ev) => {
+    const b = ev.target.closest && ev.target.closest('[data-copier-montant]');
+    if (!b) return;
+    try { await navigator.clipboard.writeText(b.dataset.copierMontant); toast('Montant copié : ' + b.dataset.copierMontant); }
+    catch { toast('Copie impossible : saisissez ' + b.dataset.copierMontant); }
+  });
+
   // Lien de paiement propre au produit (campagne) ou au devis : bouton en tête du bloc de paiement
   // Lien fixe s'il correspond au montant (1 pièce), sinon lien « montant au choix » où le client saisit le montant
   function blocPaiement(o) {
@@ -789,11 +799,14 @@
     const g = etat.groupeur || {};
     if (g.paiement_en_ligne) return blocPaiementBase(o);
     // Lien de paiement fixe : une pièce d'une campagne, ou devis avec son propre lien
-    const lien = o.lienPaiement && (o.quantite || 1) === 1 ? o.lienPaiement : null;
+    // sinon le lien général (montant libre) : le client saisit lui-même le montant affiché
+    const fixe = o.lienPaiement && (o.quantite || 1) === 1 ? o.lienPaiement : null;
+    const lien = fixe || (g.lien_paiement_general || '').trim() || null;
     if (lien) {
       return `<div class="paiement-lien">
+          ${fixe ? '' : blocMontantASaisir(o.montant)}
           <a class="btn btn-large btn-ok" href="${esc(lien)}" target="_blank" rel="noopener">📱 Payer ${fcfa(o.montant)} par Mobile Money</a>
-          <p class="aide">La page de paiement s'ouvre dans un nouvel onglet. Une fois payé, revenez ici et envoyez-nous la référence de la transaction ci-dessous pour que nous validions votre commande.</p>
+          <p class="aide">La page de paiement s'ouvre dans un nouvel onglet.${fixe ? '' : ` Saisissez exactement <b>${fcfa(o.montant)}</b> et, si possible, le même nom que sur votre compte.`} Une fois payé, revenez ici et envoyez-nous la référence de la transaction ci-dessous pour que nous validions votre commande.</p>
         </div>${blocPaiementBase(o)}`;
     }
     // Plusieurs pièces ou sur mesure : paiement accompagné sur WhatsApp
@@ -1529,6 +1542,7 @@
           <p class="suivi-code">Code de retrait : <b>${esc(k.code)}</b></p>` : ''}
         ${k.douane > 0 && k.statut !== 'remis' ? `<p>Frais de douane à régler au retrait : <b>${fcfa(k.douane)}</b></p>` : ''}</div>`;
     const payer = (montant, lien, texte) => `<div class="suivi-payer">
+        ${lien ? blocMontantASaisir(montant) : ''}
         ${lien ? `<a class="btn btn-ok" href="${esc(lien)}" target="_blank" rel="noopener">📱 Payer ${fcfa(montant)} par Mobile Money</a>` : ''}
         ${wa(texte) ? `<a class="btn btn-wa" href="${wa(texte)}" target="_blank" rel="noopener">${lien ? 'Payer avec notre aide' : 'Payer ' + fcfa(montant) + ' via WhatsApp'}</a>` : ''}
         ${lien ? '<p class="aide">Après votre paiement Mobile Money, envoyez-nous la référence reçue sur WhatsApp : nous validons et votre reçu apparaît ici.</p>' : ''}</div>`;
